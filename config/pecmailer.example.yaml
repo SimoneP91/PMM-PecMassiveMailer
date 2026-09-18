@@ -1,0 +1,51 @@
+# pecmailer - tenants, mailboxes and API keys
+#
+# Copy to config/pecmailer.yaml (git-ignored) and adapt. This file holds NO
+# secret: API keys are stored as SHA-256 hashes, mailbox passwords and webhook
+# secrets come from the environment. In Kubernetes this file is a ConfigMap and
+# the environment variables come from a Secret.
+#
+# Generate an API key and its hash with:  npm run cli -- api-key generate
+
+tenants:
+  - id: t_serfin # opaque, ours, stable: never derived from the client's own id
+    externalId: '195' # the client's identifier, any format, kept as a string
+    name: Serfin
+    apiKeys:
+      - id: key_serfin_crm
+        label: CRM production
+        sha256: 0000000000000000000000000000000000000000000000000000000000000000
+    webhook:
+      url: https://crm.serfin.example/pecmailer/events
+      secretEnv: WEBHOOK_SERFIN_SECRET
+    limits:
+      maxMessagesPerBatch: 2500
+      maxRequestBytes: 52428800 # 50 MiB per call
+      requestsPerMinute: 120
+
+mailboxes:
+  - code: serfin-aruba
+    tenant: t_serfin
+    provider: aruba # aruba | legalmail | infocert | custom
+    from:
+      address: solleciti@pec.serfin.example
+      name: Serfin - Recupero Crediti
+    smtp:
+      username: solleciti@pec.serfin.example
+      # host, port and security come from the provider preset; override here if needed
+    imap:
+      sentFolder: INBOX.Inviata # what the preset says for Aruba; providers differ
+    limits:
+      perMinute: 60
+      perDay: 0 # 0 = no daily quota
+      maxMessageBytes: 31457280 # 30 MiB, the encoded message as the provider counts it
+    # passwordEnv: MAILBOX_SERFIN_ARUBA_PASSWORD   (this is the default derived from the code)
+
+# Optional. Extends the built-in knowledge of PEC providers used to accept or
+# refuse a recipient (src/modules/recipients/pec-providers.ts). A domain that
+# matches nothing is UNDETERMINED and refused unless the batch says otherwise.
+recipients:
+  pecDomains: [] # domains under which a provider hands out PEC mailboxes
+  pecMxSuffixes: [] # mail exchangers of accredited providers (custom domains)
+  nonPecDomains: [] # ordinary mail services, refused without a DNS lookup
+  nonPecMxSuffixes: [] # mail exchangers of ordinary mail services

@@ -1,0 +1,114 @@
+# Local environment: docker compose up
+#
+#   api        http://localhost:3000      Swagger UI on /docs
+#   worker     sends, reads receipts, dispatches notifications
+#   mongo      MongoDB 8 as a single node replica set (transactions, change streams)
+#   greenmail  fake PEC provider: SMTP 3025/3465, IMAP 3143/3993, web UI 8080
+#
+# Nothing here reaches a real PEC mailbox. The example config points the
+# "serfin-aruba" mailbox preset at Greenmail through the overrides below.
+
+services:
+  mongo:
+    image: mongo:8
+    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Initiates the replica set on first run, then reports its health.
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --eval "try { rs.status().ok } catch (e) {
+          rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }).ok }"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  greenmail:
+    image: greenmail/standalone:2.1.4
+    environment:
+      # One user per mailbox declared in config/pecmailer.yaml, in Greenmail's
+      # login:password@domain form. The password must match
+      # MAILBOX_<CODE>_PASSWORD in .env; the login is the mailbox's smtp.username.
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.auth.disabled=false
+        -Dgreenmail.users=solleciti:change-me@pec.serfin.example
+        -Dgreenmail.verbose
+    ports:
+      - '3025:3025' # SMTP
+      - '3465:3465' # SMTPS
+      - '3143:3143' # IMAP
+      - '3993:3993' # IMAPS
+      - '8080:8080' # web UI and REST API
+    healthcheck:
+      # The image ships no curl or wget; bash's /dev/tcp is enough to see the
+      # SMTP and IMAP listeners answer.
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/3025 && exec 4<>/dev/tcp/127.0.0.1/3143']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: pecmailer:local
+    command: ['node', 'dist/main.api.js']
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/pecmailer?directConnection=true
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: '3000'
+      CONFIG_FILE: /config/pecmailer.yaml
+      STORAGE_DIR: /data/storage
+      LOG_PRETTY: 'false'
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./config/pecmailer.yaml:/config/pecmailer.yaml:ro
+      - storage:/data/storage
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  worker:
+    image: pecmailer:local
+    command: ['node', 'dist/main.worker.js']
+    # The image's HEALTHCHECK probes the HTTP API, which the worker does not
+    # serve. A worker-specific liveness signal arrives with the sending module.
+    healthcheck:
+      disable: true
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/pecmailer?directConnection=true
+      CONFIG_FILE: /config/pecmailer.yaml
+      STORAGE_DIR: /data/storage
+      LOG_PRETTY: 'false'
+      # Greenmail stands in for every provider on the local stack.
+      PECMAILER_SMTP_OVERRIDE_HOST: greenmail
+      PECMAILER_SMTP_OVERRIDE_PORT: '3025'
+      PECMAILER_SMTP_OVERRIDE_SECURITY: none
+      PECMAILER_IMAP_OVERRIDE_HOST: greenmail
+      PECMAILER_IMAP_OVERRIDE_PORT: '3143'
+      PECMAILER_IMAP_OVERRIDE_SECURITY: none
+    volumes:
+      - ./config/pecmailer.yaml:/config/pecmailer.yaml:ro
+      - storage:/data/storage
+    depends_on:
+      mongo:
+        condition: service_healthy
+      greenmail:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+volumes:
+  mongo-data:
+  storage:

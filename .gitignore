@@ -1,1 +1,32 @@
+# Legacy PHP project kept locally as a reference. It contains real credentials
+# and must never be committed.
 oldProject/
+
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config/pecmailer.yaml
+config/*.local.yaml
+
+# Local runtime data (docker volumes bound to the tree, storage of a dev run)
+data/
+storage/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated
+openapi.json
+
+
+#Local documentation
+documentation.md

@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+oldProject
+storage
+data
+test
+docs
+.git
+.env
+.env.*
+config/pecmailer.yaml
+config/*.local.yaml
+*.md
