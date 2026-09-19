@@ -1,125 +1,93 @@
 # pecmailer
 
-Microservizio multi-tenant che spedisce PEC per conto di applicazioni clienti, raccoglie le ricevute legali e conserva tutto ciò che ha spedito.
+Spedisce PEC per conto di applicazioni clienti. Ogni container serve un cliente e una sua casella: prende le PEC da una coda di ingresso, le spedisce tramite il gestore e mette in una coda di uscita cosa è successo, cioè l'esito e poi ogni ricevuta. Non conserva niente: chi riempie e svuota le code tiene i dati, gli allegati e le ricevute.
 
-> English documentation: [README.md](README.md)
-
-Il cliente invia un **lotto**: un template, una casella, N destinatari ciascuno con i propri valori per i placeholder e i propri allegati, in una sola chiamata HTTP. Il servizio valida tutto in anticipo, spedisce al ritmo consentito dal provider, archivia una copia nella cartella Inviata della casella, legge le ricevute di accettazione e consegna e avvisa il cliente quando il lotto è partito e quando è concluso.
+Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messaggi.md) ([inglese](docs/en/messages.md)). Il contratto formale: [docs/asyncapi.yaml](docs/asyncapi.yaml).
 
 ## Stato
 
-Tutte e cinque le fasi sono fatte: i lotti vengono accettati, **spediti**, **seguiti** e **chiusi**. Il cliente invia template, casella e fino a 2.500 destinatari con i loro file in una sola chiamata multipart; ogni riga è validata, resa e messa in coda; il worker spedisce ogni messaggio una volta sola, al ritmo della casella, archivia i byte esatti, ne mette una copia in Inviata e non indovina mai quando l'esito è ignoto (STUCK, per un operatore). Poi legge le ricevute PEC dalla casella (in sola lettura), porta ogni messaggio in ACCEPTED, DELIVERED o NOT_DELIVERED, conserva ogni ricevuta come prova legale e chiude il lotto quando ogni esito è noto o dopo 30 ore. Il cliente elenca e cerca lotti e messaggi, scarica l'EML esatto e ogni ricevuta con le loro impronte, annulla ciò che non è partito e riceve webhook firmati quando un lotto è partito, quando è chiuso e quando una casella viene sospesa.
+È in corso la fase 6: il passaggio da un'API HTTP con database alle code. Le fasi da 1 a 5, cioè l'API HTTP con MongoDB, versione 0.5.1, restano nella storia di git.
 
-| Fase | Contenuto                                                                                                            | Stato |
-| ---- | -------------------------------------------------------------------------------------------------------------------- | ----- |
-| 1    | strumenti, Docker, configurazione, health, Swagger, `GET /v1/mailboxes`                                              | fatta |
-| 2    | `POST /v1/batches`: ricezione multipart, regole dei template, verifica PEC del destinatario, allegati, prova a vuoto | fatta |
-| 3    | worker di invio: lease della casella, pacing, SMTP, copia IMAP, archivio EML, macchina a stati                       | fatta |
-| 4    | endpoint di lettura: lotti, messaggi, ricerca, annullamento                                                          | fatta |
-| 5    | ricevute, webhook, chiusura del lotto                                                                                | fatta |
+| Passo | Contenuto                                                                                                     | Stato    |
+| ----- | ------------------------------------------------------------------------------------------------------------- | -------- |
+| 1     | contratto dei messaggi: documento AsyncAPI e guide                                                            | fatto    |
+| 2     | pulizia, configurazione da variabili d'ambiente, collegamento a RabbitMQ e code, sonde, stack locale, comandi | fatto    |
+| 3     | invio: controlli, SMTP, copia in Inviata, ritmo, ritentativi, esiti, PEC riconsegnate                         | prossimo |
+| 4     | ricevute: lettura della casella, eventi delle ricevute                                                        |          |
+| 5     | documentazione e collaudo su caselle reali                                                                    |          |
 
-## Stack
+## Tecnologie
 
-Node 24 · TypeScript 5.9 (strict, nessun `any`) · NestJS 11 su Fastify · MongoDB 8 + Mongoose · Zod (validazione e OpenAPI dagli stessi schemi) · nodemailer / imapflow · pino · Vitest · Docker.
+Node 24 · TypeScript 5.9 (rigoroso, nessun `any`) · RabbitMQ tramite rabbitmq-client · nodemailer / imapflow / mailparser · htmlparser2 · Zod · pino · Vitest · Docker. Nessun framework, nessun database.
 
 ## Avvio rapido
 
 ```bash
-cp .env.example .env                              # poi sostituisci ogni change-me: WEBHOOK_*_SECRET vuole openssl rand -hex 32
-cp config/pecmailer.example.yaml config/pecmailer.yaml
 npm install
-npm run build
-npm run cli -- api-key generate --label "locale"  # incolla l'hash in config/pecmailer.yaml
-npm run cli -- config check                       # niente parte finché questo non passa
 docker compose up --build
 ```
 
-Poi:
+- Pagina di RabbitMQ: http://localhost:15672 (utente `pecmailer`, password `pecmailer`), con tre code per casella: `pecmailer.serfin.serfin-aruba.in`, `.out`, `.dead`, e le stesse per `serfin-legalmail`.
+- Greenmail, il finto gestore PEC: http://localhost:8080
+- Sonde: http://localhost:3001/health/ready (serfin-aruba), http://localhost:3002/health/ready (serfin-legalmail)
 
-- Swagger UI: http://localhost:3000/docs
-- health: http://localhost:3000/health/ready
-- `curl -H "Authorization: Bearer pm_..." http://localhost:3000/v1/mailboxes`
-- invio di un lotto (una chiamata: parte JSON + parti file):
-
-  ```bash
-  curl -X POST http://localhost:3000/v1/batches \
-    -H "Authorization: Bearer pm_..." \
-    -H "Idempotency-Key: $(uuidgen)" \
-    -F 'batch={"mailbox":"serfin-aruba","template":{"subject":"Pratica {{n}}","html":"<p>Gentile {{name}}</p>"},"messages":[{"ref":"1","to":"x@pec.it","vars":{"n":"1","name":"Rossi"},"attachments":[{"part":"doc"}]}]};type=application/json' \
-    -F 'doc=@sollecito.pdf'
-  ```
-
-  Con `"options":{"dryRun":true}` valida e mostra l'anteprima senza creare nulla.
-
-- seguirlo:
-
-  ```bash
-  curl -H "Authorization: Bearer pm_..." http://localhost:3000/v1/batches/b_...                 # stato e contatori
-  curl -H "Authorization: Bearer pm_..." "http://localhost:3000/v1/messages?ref=1"              # ritrovare una riga col proprio ref
-  curl -H "Authorization: Bearer pm_..." -OJ http://localhost:3000/v1/messages/m_.../eml         # ciò che è partito
-  curl -X POST -H "Authorization: Bearer pm_..." http://localhost:3000/v1/batches/b_.../cancel   # fermare ciò che non è partito
-  curl -H "Authorization: Bearer pm_..." http://localhost:3000/v1/messages/m_.../receipts       # accettazione, consegna...
-  curl -H "Authorization: Bearer pm_..." -OJ http://localhost:3000/v1/receipts/r_.../eml         # una ricevuta, la prova legale
-  ```
-
-- Greenmail (finto provider PEC), interfaccia web: http://localhost:8080
-- probe del worker: http://localhost:3001/health/live
-
-Operazioni (stessa immagine, `node dist/main.cli.js`, oppure `npm run cli --` in locale):
+Per fare la parte del CRM da questa macchina, con le impostazioni di [examples/local.env](examples/local.env):
 
 ```bash
-npm run cli -- db sync-indexes --dry-run    # indici da creare/eliminare; senza --dry-run li applica
-npm run cli -- mailbox list                 # stato di ogni casella e quale worker la detiene
-npm run cli -- mailbox probe serfin-aruba   # login SMTP + IMAP con le credenziali configurate
-npm run cli -- mailbox activate serfin-aruba
-npm run cli -- message stuck                # messaggi dall'esito ignoto
-npm run cli -- message resolve m_... --as sent|requeue|failed
-npm run cli -- webhook list                 # eventi non ancora consegnati, con l'ultimo errore
-npm run cli -- webhook retry ev_...         # un evento FAILED riceve una nuova finestra di 24 ore
+npm run build
+npm run local:publish -- examples/pec.json                       # una PEC con un PDF, nella coda di serfin-aruba
+npm run local:publish -- examples/pec.json --mailbox serfin-legalmail
+npm run local:outcomes -- --follow                               # cosa è successo, man mano (Ctrl+C per fermare)
+```
+
+Fino al passo 3 i container non prendono ancora le PEC: una PEC pubblicata resta in attesa nella coda di ingresso.
+
+Operazioni, dentro un container oppure con un `.env` (vedi [.env.example](.env.example)):
+
+```bash
+docker compose exec serfin-aruba node dist/main.cli.js config check   # la configurazione con cui gira, senza segreti
+docker compose exec serfin-aruba node dist/main.cli.js probe          # accesso SMTP e IMAP, senza spedire nulla
 ```
 
 ## Sviluppo
 
 ```bash
-npm run dev:api          # API con ricarica automatica
-npm run dev:worker       # worker con ricarica automatica
-npm run check            # typecheck + lint + formato + test unitari: ciò che esegue la CI
-npm run test:e2e         # superficie HTTP contro un MongoDB in memoria (binario scaricato una volta, ~800 MB)
-npm run test:integration # IMAP reale contro Greenmail: prima docker compose -f docker-compose.test.yml up -d
-npm run openapi:export   # scrive openapi.json per chi integra
+npm run check                                         # tipi + lint + formato + test unitari
+docker compose -f docker-compose.test.yml up -d --wait
+npm run test:integration                              # contro un RabbitMQ e un Greenmail veri
 ```
 
 ## Configurazione
 
-Due sorgenti, lette una volta all'avvio; il processo si rifiuta di partire se una delle due non è valida:
+Solo variabili d'ambiente, tutte elencate con i valori predefiniti in [.env.example](.env.example): chi è il container (cliente, casella, gestore, mittente), le credenziali della casella, il ritmo e `RABBITMQ_URL`. Le code si chiamano `<prefisso>.<cliente>.<casella>.in`, `.out` e `.dead`. Una variabile sbagliata ferma l'avvio con un messaggio che la nomina.
 
-- **ambiente** ([.env.example](.env.example)): porte, database, percorsi e ogni segreto — password delle caselle come `MAILBOX_<CODICE>_PASSWORD`, segreti di firma dei webhook per nome.
-- **file di configurazione** ([config/pecmailer.example.yaml](config/pecmailer.example.yaml)): tenant, hash delle loro chiavi API, caselle e limiti. Non contiene segreti; in Kubernetes è una ConfigMap.
+RabbitMQ richiede due impostazioni, in [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf): una dimensione massima dei messaggi di 64 MB, perché una PEC da 30 MB dentro un messaggio diventa circa 40 MB e il predefinito è 16 MB; e i 30 minuti di attesa della conferma, su cui sono calcolati i ritentativi.
 
 ## Struttura
 
 ```
 src/
-  main.api.ts | main.worker.ts | main.cli.ts   entry point, una sola immagine
-  app/          moduli per entry point, Swagger
-  config/       schemi di ambiente e file di configurazione, loader
-  common/       errori (RFC 9457), logging, sicurezza, id, tempo
-  database/     connessione MongoDB
-  modules/      auth · tenants · mailboxes · batches · messages · templates · recipients · attachments · sending · health
-  cli/          comandi di amministrazione
-test/
-  unit/ integration/ e2e/ security/
-docker/         Dockerfile, init di mongo
-config/         configurazione di esempio
-docs/           architettura, API, decisioni (en/it)
+  main.ts        il container: un cliente, una casella
+  main.cli.ts    comandi di amministrazione e di sviluppo
+  app/           server delle sonde, versione
+  config/        schema delle variabili, impostazioni dei gestori
+  queue/         l'interfaccia delle code e la sua versione RabbitMQ
+  modules/       recipients (controllo PEC) · templates (regole HTML) · attachments (tipo degli allegati)
+                 sending (messaggio, SMTP, copia in Inviata) · receipts (lettura ricevute, daticert, IMAP)
+  cli/           comandi
+  common/        log, segreti, orologio
+test/            unit/ integration/ helpers/ fixtures/ (ricevute vere di Aruba, anonimizzate)
+docker/          Dockerfile, impostazioni di RabbitMQ
+docs/            contratto, guide, decisioni (en/it)
+examples/        una PEC e le impostazioni per provare lo stack locale
 ```
 
-## Rilasciare una versione
+## Messa in produzione
 
-1. Costruire e pubblicare l'immagine.
-2. Eseguire una volta `node dist/main.cli.js db sync-indexes` con la nuova immagine (un Job Kubernetes): in produzione né l'API né il worker creano indici, e alcuni portano garanzie (una `dedupKey` usata una sola volta per tenant).
-3. Aggiornare API e worker.
+Un Deployment per ogni coppia cliente-casella, con una sola copia: la coda di ingresso lascia comunque prendere le PEC a un solo lettore alla volta. Variabili da una ConfigMap, e da un Secret per la password della casella e `RABBITMQ_URL`. Sonde `/health/live` e `/health/ready` sulla porta 3001. Nessun volume: il file system può essere in sola lettura.
+
+Il container crea le sue code all'avvio. Se l'infrastruttura preferisce crearle lei, usa gli stessi parametri (vedi [docs/asyncapi.yaml](docs/asyncapi.yaml)) e imposta `PECMAILER_DECLARE_QUEUES=false`.
 
 ## Sicurezza
 
-Vedi [SECURITY.md](SECURITY.md). In breve: le chiavi API sono conservate come hash, le password delle caselle non lasciano mai l'ambiente, ogni errore è un problem document che non porta mai un messaggio interno, e nessun tenant può nominarne un altro in nessuna richiesta.
+Vedi [SECURITY.md](SECURITY.md).

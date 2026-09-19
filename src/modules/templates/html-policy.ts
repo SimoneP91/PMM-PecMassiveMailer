@@ -1,7 +1,7 @@
 import { isComment, isDirective, isTag, isText, type ChildNode, type Element } from 'domhandler';
 import { parseDocument } from 'htmlparser2';
 
-import type { FieldError } from '../../common/errors/app-error';
+import type { FieldError } from '../../common/field-error';
 
 /**
  * What a template may contain. A closed list: an element or attribute not in

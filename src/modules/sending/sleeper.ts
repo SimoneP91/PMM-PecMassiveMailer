@@ -1,7 +1,5 @@
-import { Injectable } from '@nestjs/common';
-
 /**
- * Injectable waiting. The loops sleep between polls, between paced sends and
+ * Replaceable waiting. The loops sleep between polls, between paced sends and
  * while a mailbox is suspended; a shutdown must cut every one of those
  * short, and a test must not have to wait for real.
  */
@@ -10,9 +8,6 @@ export interface Sleeper {
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
-export const SLEEPER = Symbol('SLEEPER');
-
-@Injectable()
 export class SystemSleeper implements Sleeper {
   public sleep(ms: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted === true || ms <= 0) {

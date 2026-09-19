@@ -1,113 +1,77 @@
-import 'reflect-metadata';
+import { runConfigCheck, runProbe } from './cli/mailbox-tools';
+import { runOutcomes, runPublish } from './cli/queue-tools';
+import { ConfigError, loadQueueSettings, type QueueSettings } from './config/config';
 
-import { parseArgs } from 'node:util';
+const USAGE = `pecmailer admin and development commands (settings from the environment, as for the container)
 
-import { runApiKeyGenerate } from './cli/api-key.command';
-import { runConfigCheck } from './cli/config-check.command';
-import { runDbSyncIndexes } from './cli/db.command';
-import {
-  runMailboxActivate,
-  runMailboxList,
-  runMailboxProbe,
-  runMailboxSuspend,
-} from './cli/mailbox.command';
-import { runMessageResolve, runMessageStuck } from './cli/message.command';
-import { runWebhookList, runWebhookRetry } from './cli/webhook.command';
-import { withApp } from './cli/with-app';
+  config check                         the configuration the container would run with, no secrets
+  probe                                SMTP and IMAP login with the configured credentials, nothing sent
 
-const USAGE = `pecmailer admin commands
+  publish <file.json | ->              put a PEC in the input queue (id and version added when missing;
+                                       attachments may give "path" instead of "content")
+  outcomes [--follow] [--save <dir>]   print the output queue's events and take them away;
+                                       --save writes each event, and each receipt's .eml, to <dir>
 
-  api-key generate [--label <text>]     generate an API key: prints it once and the hash for the config file
-  config check                          load environment and configuration, report what was resolved (no secrets)
-  db sync-indexes [--dry-run]           create/drop MongoDB indexes to match the code; run once per release
+  publish and outcomes accept --mailbox <code> to use another mailbox of the same tenant.
+  Against the local stack: npm run local:publish -- examples/pec.json, npm run local:outcomes -- --follow
+`;
 
-  mailbox list                          every mailbox with its state and which worker holds it
-  mailbox probe <code>                  log in over SMTP and IMAP with the configured credentials, send nothing
-  mailbox activate <code>               reactivate a suspended mailbox (after fixing its password)
-  mailbox suspend <code> [--reason ..]  stop sending through a mailbox
+/** The value after a flag, when the flag is there. */
+function option(args: readonly string[], flag: string): string | undefined {
+  const at = args.indexOf(flag);
 
-  message stuck                         messages whose outcome is unknown and need a decision
-  message resolve <id> --as <outcome>   sent | requeue | failed, after checking the provider's Sent folder
+  return at >= 0 ? args[at + 1] : undefined;
+}
 
-  webhook list [--status <status>]      events not delivered yet (or: PENDING, DELIVERING, DELIVERED, FAILED)
-  webhook retry <eventId>               queue a FAILED event again for a new retry window
-  help
+function queueSettings(args: readonly string[]): QueueSettings {
+  const mailbox = option(args, '--mailbox');
 
-Exit codes: 0 ok, 1 error.`;
+  return loadQueueSettings(
+    mailbox === undefined ? process.env : { ...process.env, PECMAILER_MAILBOX: mailbox },
+  );
+}
 
 async function main(argv: readonly string[]): Promise<number> {
-  const { positionals, values } = parseArgs({
-    args: [...argv],
-    allowPositionals: true,
-    options: {
-      label: { type: 'string' },
-      reason: { type: 'string' },
-      as: { type: 'string' },
-      status: { type: 'string' },
-      'dry-run': { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-  });
+  const [command, ...rest] = argv;
+  switch (command) {
+    case 'config':
+      if (rest[0] === 'check') {
+        return runConfigCheck(process.env);
+      }
+      break;
+    case 'probe':
+      return runProbe(process.env);
+    case 'publish': {
+      const file = rest.find((arg, i) => !arg.startsWith('--') && rest[i - 1] !== '--mailbox');
+      if (file !== undefined) {
+        return runPublish(queueSettings(rest), file);
+      }
+      break;
+    }
+    case 'outcomes': {
+      const saveTo = option(rest, '--save');
 
-  const [group, action, argument] = positionals;
-  if (values.help === true || group === undefined || group === 'help') {
-    console.log(USAGE);
+      return runOutcomes(queueSettings(rest), {
+        follow: rest.includes('--follow'),
+        ...(saveTo === undefined ? {} : { saveTo }),
+      });
+    }
+    case undefined:
+    default:
+      break;
+  }
+  console.error(USAGE);
 
-    return 0;
-  }
-
-  if (group === 'api-key' && action === 'generate') {
-    return runApiKeyGenerate(values.label);
-  }
-  if (group === 'config' && action === 'check') {
-    return runConfigCheck(process.env);
-  }
-  if (group === 'db' && action === 'sync-indexes') {
-    return withApp(process.env, (app) => runDbSyncIndexes(app, values['dry-run'] === true));
-  }
-  if (group === 'mailbox') {
-    if (action === 'list') {
-      return withApp(process.env, runMailboxList);
-    }
-    if (argument !== undefined && action === 'probe') {
-      return withApp(process.env, (app) => runMailboxProbe(app, argument));
-    }
-    if (argument !== undefined && action === 'activate') {
-      return withApp(process.env, (app) => runMailboxActivate(app, argument));
-    }
-    if (argument !== undefined && action === 'suspend') {
-      return withApp(process.env, (app) => runMailboxSuspend(app, argument, values.reason));
-    }
-  }
-  if (group === 'message') {
-    if (action === 'stuck') {
-      return withApp(process.env, runMessageStuck);
-    }
-    if (argument !== undefined && action === 'resolve') {
-      return withApp(process.env, (app) => runMessageResolve(app, argument, values.as));
-    }
-  }
-
-  if (group === 'webhook') {
-    if (action === 'list') {
-      return withApp(process.env, (app) => runWebhookList(app, values.status));
-    }
-    if (argument !== undefined && action === 'retry') {
-      return withApp(process.env, (app) => runWebhookRetry(app, argument));
-    }
-  }
-
-  console.error(`unknown command: ${positionals.join(' ')}\n`);
-  console.log(USAGE);
-
-  return 1;
+  return 2;
 }
 
 main(process.argv.slice(2))
   .then((code) => {
-    process.exitCode = code;
+    process.exit(code);
   })
   .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+    console.error(
+      error instanceof ConfigError ? error.message : error instanceof Error ? error.message : String(error),
+    );
+    process.exit(1);
   });

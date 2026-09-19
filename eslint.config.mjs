@@ -36,8 +36,6 @@ export default tseslint.config(
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      // NestJS relies on classes used only as DI tokens and on parameter properties.
-      '@typescript-eslint/no-extraneous-class': ['error', { allowWithDecorator: true }],
       '@typescript-eslint/parameter-properties': 'off',
       'no-console': 'error',
       eqeqeq: ['error', 'always'],
@@ -57,7 +55,7 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    files: ['src/main.cli.ts', 'src/cli/**/*.ts', 'src/tools/**/*.ts'],
+    files: ['src/main.cli.ts', 'src/cli/**/*.ts'],
     rules: {
       // Command line tools talk to a terminal, by definition.
       'no-console': 'off',

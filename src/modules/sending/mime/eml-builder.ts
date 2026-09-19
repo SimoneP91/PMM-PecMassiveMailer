@@ -1,97 +1,95 @@
-import { createWriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { pipeline } from 'node:stream/promises';
-
-import { Inject, Injectable } from '@nestjs/common';
 import MailComposer from 'nodemailer/lib/mail-composer';
 
-import { HashingTap } from '../../../common/fs/hashing-tap';
-import { CLOCK, type Clock } from '../../../common/time/clock';
-import type { ResolvedMailbox } from '../../../config/config.loader';
-import { AttachmentStore } from '../../attachments/attachment-store';
-import type { MessageDocument } from '../../batches/schemas/message.schema';
+import type { Clock } from '../../../common/time/clock';
+import type { ResolvedMailbox } from '../../../config/config';
+
+/** A PEC as it leaves the queue, validated, with its files decoded. */
+export interface OutgoingPec {
+  /** The sender's identifier: it becomes part of the Message-ID. */
+  readonly id: string;
+  readonly to: { readonly address: string; readonly name?: string };
+  readonly subject: string;
+  readonly html: string;
+  readonly attachments: readonly {
+    readonly filename: string;
+    readonly contentType: string;
+    readonly content: Buffer;
+  }[];
+  readonly inlineImages: readonly {
+    readonly cid: string;
+    readonly filename: string;
+    readonly contentType: string;
+    readonly content: Buffer;
+  }[];
+}
 
 export interface BuiltEml {
-  /** Absolute path of the .eml file */
-  readonly path: string;
-  /** Relative to STORAGE_DIR, what the message record keeps */
-  readonly relativePath: string;
+  /** The message exactly as it will be transmitted. */
+  readonly raw: Buffer;
   readonly messageIdHeader: string;
   readonly date: Date;
-  /** Digest and size of the file, i.e. of the bytes that will be transmitted. */
-  readonly sha256: string;
-  readonly size: number;
+}
+
+const OUR_MESSAGE_ID = /^<pm\.([A-Za-z0-9][A-Za-z0-9._-]{0,63})@[^<>@\s]+>$/;
+
+/**
+ * The Message-ID of a PEC: `<pm.{id}@{sender domain}>`. Every receipt quotes
+ * it, so the sender's id comes back with each receipt, and the container can
+ * recognise its own messages among the mails of the mailbox, without keeping
+ * anything.
+ */
+export function messageIdFor(id: string, fromAddress: string): string {
+  return `<pm.${id}@${fromAddress.slice(fromAddress.lastIndexOf('@') + 1)}>`;
+}
+
+/** The sender's id inside one of our Message-IDs; undefined for any other message. */
+export function idFromMessageId(messageId: string | undefined): string | undefined {
+  return messageId === undefined ? undefined : OUR_MESSAGE_ID.exec(messageId.trim())?.[1];
 }
 
 /**
- * Turns a stored message into the MIME file that will be sent. The file is
- * written first and sent as-is afterwards: what is archived is byte for byte
- * what left, which is what a legal dispute asks for.
- *
- * The Message-ID is ours and deterministic (<message id>@<sender domain>):
- * the acceptance and delivery receipts of stage 5 quote it, and a resend
- * decided by an operator keeps the same id on purpose.
+ * Builds the MIME message of a PEC in memory. The container keeps nothing on
+ * disk: the message is composed, transmitted and forgotten; the sender keeps
+ * what it needs from the outcome events.
  */
-@Injectable()
 export class EmlBuilder {
-  public constructor(
-    private readonly store: AttachmentStore,
-    @Inject(CLOCK) private readonly clock: Clock,
-  ) {}
+  public constructor(private readonly clock: Clock) {}
 
-  public static messageIdFor(
-    message: Pick<MessageDocument, '_id'>,
-    mailbox: Pick<ResolvedMailbox, 'from'>,
-  ): string {
-    const domain = mailbox.from.address.slice(mailbox.from.address.lastIndexOf('@') + 1);
-
-    return `<${message._id}@${domain}>`;
-  }
-
-  public async build(message: MessageDocument, mailbox: ResolvedMailbox): Promise<BuiltEml> {
+  public async build(pec: OutgoingPec, mailbox: Pick<ResolvedMailbox, 'from'>): Promise<BuiltEml> {
     const date = this.clock.now();
-    const messageIdHeader = EmlBuilder.messageIdFor(message, mailbox);
-    const path = this.store.absolute(`batches/${message.tenantId}/${message.batchId}/eml/${message._id}.eml`);
-    await mkdir(dirname(path), { recursive: true });
-
+    const messageIdHeader = messageIdFor(pec.id, mailbox.from.address);
     const composer = new MailComposer({
       from: { name: mailbox.from.name, address: mailbox.from.address },
-      to: message.toName === undefined ? message.to : { name: message.toName, address: message.to },
-      subject: message.subject,
-      html: message.html,
+      to: pec.to.name === undefined ? pec.to.address : { name: pec.to.name, address: pec.to.address },
+      subject: pec.subject,
+      html: pec.html,
       messageId: messageIdHeader,
       date,
-      headers: {
-        'X-PecMailer-Message-Id': message._id,
-        'X-PecMailer-Batch-Id': message.batchId,
-      },
       attachments: [
-        ...message.inlineImages.map((image) => ({
-          filename: image.part,
-          path: this.store.absolute(image.path),
+        ...pec.inlineImages.map((image) => ({
+          filename: image.filename,
+          content: image.content,
           contentType: image.contentType,
           cid: image.cid,
-          contentDisposition: 'inline',
+          contentDisposition: 'inline' as const,
         })),
-        ...message.attachments.map((attachment) => ({
+        ...pec.attachments.map((attachment) => ({
           filename: attachment.filename,
-          path: this.store.absolute(attachment.path),
+          content: attachment.content,
           contentType: attachment.contentType,
         })),
       ],
     });
+    const raw = await new Promise<Buffer>((resolve, reject) => {
+      composer.compile().build((error, message) => {
+        if (error === null) {
+          resolve(message);
+        } else {
+          reject(error);
+        }
+      });
+    });
 
-    const tap = new HashingTap();
-    await pipeline(composer.compile().createReadStream(), tap, createWriteStream(path, { flags: 'w' }));
-
-    return {
-      path,
-      relativePath: this.store.relative(path),
-      messageIdHeader,
-      date,
-      sha256: tap.digest().sha256,
-      size: tap.size,
-    };
+    return { raw, messageIdHeader, date };
   }
 }

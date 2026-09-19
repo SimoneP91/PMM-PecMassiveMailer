@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+Stage 6: from an HTTP API with a database to queues. In progress; released as 0.6.0 at its end.
+
+### Changed
+
+- One container per tenant and mailbox, configured by environment variables only; no configuration file.
+- RabbitMQ is the input and the output: three quorum queues per container (`.in`, `.out`, `.dead`), declared at start-up or checked when the infrastructure owns them.
+- Logs: JSON lines on standard output with tenant and mailbox, level names instead of numbers.
+- Docker image: one entry point (`dist/main.js`), probes on port 3001, no volume.
+
+### Added
+
+- The queue contract: `docs/asyncapi.yaml` and the guides `docs/it/messaggi.md`, `docs/en/messages.md`, with PHP examples.
+- CLI: `config check`, `probe`, and for development `publish` and `outcomes`, with `npm run local:publish` / `local:outcomes` and `examples/`.
+- Integration tests against a real RabbitMQ.
+
+### Removed
+
+- The HTTP API (batches, searches, downloads, Swagger), API keys, webhooks, MongoDB and everything stored in it, the multi-tenant YAML configuration, templates and placeholders, NestJS.
+
 ## [0.5.1] - 2026-09-19
 
 Review of stages 4 and 5.

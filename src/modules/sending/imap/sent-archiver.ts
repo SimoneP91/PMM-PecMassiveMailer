@@ -1,7 +1,6 @@
-import { Injectable } from '@nestjs/common';
 import { ImapFlow } from 'imapflow';
 
-import type { ResolvedImap, ResolvedMailbox } from '../../../config/config.loader';
+import type { ResolvedImap, ResolvedMailbox } from '../../../config/config';
 
 /**
  * Files a copy of a sent message in the mailbox's Sent folder, so the
@@ -15,15 +14,14 @@ import type { ResolvedImap, ResolvedMailbox } from '../../../config/config.loade
 export interface SentArchiver {
   append(eml: Buffer, sentAt: Date): Promise<void>;
   /** Connects, logs in and checks the Sent folder exists. */
-  verify(): Promise<void>;
+  /** true when the Sent folder exists; throws when the login fails. */
+  verify(): Promise<boolean>;
   close(): Promise<void>;
 }
 
 export interface SentArchiverFactory {
   create(mailbox: ResolvedMailbox, imap: ResolvedImap): SentArchiver;
 }
-
-export const SENT_ARCHIVER_FACTORY = Symbol('SENT_ARCHIVER_FACTORY');
 
 class ImapflowSentArchiver implements SentArchiver {
   private client: ImapFlow | undefined;
@@ -58,12 +56,12 @@ class ImapflowSentArchiver implements SentArchiver {
     }
   }
 
-  public async verify(): Promise<void> {
+  /** Logs in and looks for the Sent folder. Login problems throw; a missing folder is reported as false. */
+  public async verify(): Promise<boolean> {
     const client = await this.connected();
-    const status = await client.status(this.imap.sentFolder, { messages: true });
-    if (typeof status.messages !== 'number') {
-      throw new Error(`folder "${this.imap.sentFolder}" not found`);
-    }
+    const folders = await client.list();
+
+    return folders.some((folder) => folder.path === this.imap.sentFolder);
   }
 
   public async close(): Promise<void> {
@@ -103,7 +101,6 @@ class ImapflowSentArchiver implements SentArchiver {
   }
 }
 
-@Injectable()
 export class ImapflowSentArchiverFactory implements SentArchiverFactory {
   public create(_mailbox: ResolvedMailbox, imap: ResolvedImap): SentArchiver {
     return new ImapflowSentArchiver(imap);

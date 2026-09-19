@@ -1,7 +1,6 @@
-import { Injectable } from '@nestjs/common';
 import { ImapFlow } from 'imapflow';
 
-import type { ResolvedImap, ResolvedMailbox } from '../../config/config.loader';
+import type { ResolvedImap, ResolvedMailbox } from '../../config/config';
 
 /** One mail of the folder, before its body is downloaded. */
 export interface SourceMail {
@@ -61,8 +60,6 @@ export interface ReceiptSource {
 export interface ReceiptSourceFactory {
   create(mailbox: ResolvedMailbox, imap: ResolvedImap): ReceiptSource;
 }
-
-export const RECEIPT_SOURCE_FACTORY = Symbol('RECEIPT_SOURCE_FACTORY');
 
 class ImapflowReceiptSource implements ReceiptSource {
   public constructor(private readonly imap: ResolvedImap) {}
@@ -144,7 +141,6 @@ class ImapflowReceiptSource implements ReceiptSource {
   }
 }
 
-@Injectable()
 export class ImapflowReceiptSourceFactory implements ReceiptSourceFactory {
   public create(_mailbox: ResolvedMailbox, imap: ResolvedImap): ReceiptSource {
     return new ImapflowReceiptSource(imap);

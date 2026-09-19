@@ -6,6 +6,8 @@ Report privately to the maintainers; do not open a public issue. Include the req
 
 ## What the service protects and how
 
+> **Stage 6 in progress.** The service is moving from an HTTP API with MongoDB to queues (see [ADR 0006](docs/en/adr/0006-queues-no-database.md)). The rows about the HTTP API, API keys, tenant isolation through the API, stored files, the database and webhooks describe version 0.5.1 and no longer apply; this document is rewritten at the end of the stage. What already holds for the new service: secrets only from the environment and never logged, no data at rest, a PEC never resent blindly, HTML safety rules, PEC recipient check, file type detection, receipt trust model.
+
 **Target**: OWASP ASVS Level 2, OWASP API Security Top 10. The controls below are the ones the code enforces today; each later stage documents its own.
 
 | Concern                            | Control                                                                                                                                                                                                                                                                                                                                                                         |

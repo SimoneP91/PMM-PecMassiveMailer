@@ -1,27 +1,31 @@
 # Backing services for the integration suite, nothing else:
-#   docker compose -f docker-compose.test.yml up -d
+#   docker compose -f docker-compose.test.yml up -d --wait
 #   npm run test:integration
-#   docker compose -f docker-compose.test.yml down -v
+#   docker compose -f docker-compose.test.yml down
 #
-# Different ports from docker-compose.yml, so both stacks can run at once.
+# A project of its own and different ports from docker-compose.yml, so both
+# stacks can run at once without seeing each other's containers.
+
+name: pecmailer-test
 
 services:
-  mongo-test:
-    image: mongo:8
-    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
+  rabbitmq-test:
+    image: rabbitmq:4.3
+    environment:
+      RABBITMQ_DEFAULT_USER: test
+      RABBITMQ_DEFAULT_PASS: test
     ports:
-      - '27018:27017'
+      - '5673:5672'
+    volumes:
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-pecmailer.conf:ro
     tmpfs:
-      - /data/db
+      - /var/lib/rabbitmq
     healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          mongosh --quiet --eval "try { rs.status().ok } catch (e) {
-          rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }"
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
       interval: 3s
-      timeout: 5s
-      retries: 20
+      timeout: 10s
+      retries: 40
+      start_period: 10s
 
   greenmail-test:
     image: greenmail/standalone:2.1.4
@@ -38,4 +42,3 @@ services:
     ports:
       - '13025:3025'
       - '13143:3143'
-      - '18080:8080'

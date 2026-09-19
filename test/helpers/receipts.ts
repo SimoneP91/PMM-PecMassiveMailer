@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config.loader';
+import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config';
 import {
   ReceiptSourceAuthError,
   type ReadPosition,

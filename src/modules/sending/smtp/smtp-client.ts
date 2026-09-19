@@ -1,15 +1,13 @@
-import { createReadStream } from 'node:fs';
-
-import { Injectable } from '@nestjs/common';
 import { createTransport, type NodemailerError, type Transporter } from 'nodemailer';
 import type { SMTPSentMessageInfo } from 'nodemailer/lib/smtp-transport';
 
-import type { ResolvedMailbox } from '../../../config/config.loader';
+import type { ResolvedMailbox } from '../../../config/config';
 
 export interface SmtpSendInput {
   readonly from: string;
   readonly to: string;
-  readonly emlPath: string;
+  /** The whole message, exactly as it will be transmitted. */
+  readonly raw: Buffer;
 }
 
 export interface SmtpSendResult {
@@ -48,8 +46,6 @@ export interface SmtpClient {
 export interface SmtpClientFactory {
   create(mailbox: ResolvedMailbox): SmtpClient;
 }
-
-export const SMTP_CLIENT_FACTORY = Symbol('SMTP_CLIENT_FACTORY');
 
 /**
  * Watches the SMTP dialogue through nodemailer's transaction log, which is
@@ -115,7 +111,7 @@ class NodemailerSmtpClient implements SmtpClient {
     try {
       const info = await this.transporter.sendMail({
         envelope: { from: input.from, to: [input.to] },
-        raw: createReadStream(input.emlPath),
+        raw: input.raw,
       });
 
       return { response: info.response ?? '', accepted: info.accepted };
@@ -153,7 +149,6 @@ class NodemailerSmtpClient implements SmtpClient {
   }
 }
 
-@Injectable()
 export class NodemailerSmtpClientFactory implements SmtpClientFactory {
   public create(mailbox: ResolvedMailbox): SmtpClient {
     return new NodemailerSmtpClient(mailbox);

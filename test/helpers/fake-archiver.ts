@@ -1,4 +1,4 @@
-import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config.loader';
+import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config';
 import type { SentArchiver, SentArchiverFactory } from '../../src/modules/sending/imap/sent-archiver';
 
 /** Records what the worker would file in the Sent folder; can be told to fail. */
@@ -22,7 +22,7 @@ export class FakeSentArchiverFactory implements SentArchiverFactory {
 
         return Promise.resolve();
       },
-      verify: (): Promise<void> => Promise.resolve(),
+      verify: (): Promise<boolean> => Promise.resolve(true),
       close: (): Promise<void> => Promise.resolve(),
     };
   }
