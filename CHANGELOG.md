@@ -18,6 +18,14 @@ Stage 6: from an HTTP API with a database to queues. In progress; released as 0.
 - The queue contract: `docs/asyncapi.yaml` and the guides `docs/it/messaggi.md`, `docs/en/messages.md`, with PHP examples.
 - CLI: `config check`, `probe`, and for development `publish` and `outcomes`, with `npm run local:publish` / `local:outcomes` and `examples/`.
 - Integration tests against a real RabbitMQ.
+- Sending (phase 3): each PEC of the input queue is checked (format, HTML rules, inline images, attachment types, PEC recipient, size), sent at the mailbox's pace, retried on temporary errors within 25 minutes, copied to the Sent folder, and reported as `sent`, `rejected`, `failed` or `uncertain`; an unreadable message goes to the dead-letter queue.
+- A PEC delivered again after an interruption is never resent: its receipt is looked for in the mailbox (IMAP search on `X-Riferimento-Message-ID`); found = `sent` confirmed by the receipt, not found = `uncertain`.
+- A refused SMTP or IMAP login suspends the mailbox: `mailbox.suspended` is published, the PEC in hand goes back to the queue as a new message, nothing else is taken until a restart; readiness turns false.
+- `PECMAILER_REDELIVERY_WAIT_SECONDS` (300): how long a redelivered PEC's receipt is looked for.
+- Receipts (phase 4): the receipts folder is read every `PECMAILER_RECEIPTS_POLL_SECONDS` (read-only, headers first, one mail at a time); every receipt of a PEC of ours (Message-ID `<pm.{id}@...>`) is published whole as a `receipt` event: type, final or not, issue date, provider, recipient, error, the original `.eml` and `daticert.xml` in base64, SHA-256. Envelopes, ordinary mail and receipts of other messages are left out.
+- No cursor is kept: at every start the last `PECMAILER_RECEIPTS_LOOKBACK_HOURS` (72) are read again, and the events come out again with the same `eventId`.
+- A receipt that cannot be published is read again at every pass until it is; a mail that cannot be read three times in a row is skipped with an error in the log.
+- The mailbox suspension is shared by sender and reader: a refused IMAP login stops sending too, and the other way round.
 
 ### Removed
 

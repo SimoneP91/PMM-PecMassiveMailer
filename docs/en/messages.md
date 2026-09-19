@@ -123,14 +123,14 @@ $connection->close();
 
 Every message of the output queue is a JSON event with these fields: `version`, `event`, `eventId`, `occurredAt`, `tenant`, `mailbox`.
 
-| `event`             | Meaning                                                                                              | What to do                                                                |
-| ------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `sent`              | The provider took the PEC. Carries `messageId`, `sentAt` and the provider's answer                   | Wait for the receipts                                                     |
-| `rejected`          | Not sent: the message breaks a rule, `errors` says which                                             | Fix it and publish it again with a new id                                 |
-| `failed`            | Not sent: the provider refused it, or temporary errors lasted too long                               | Read `code` and `detail`; publish again with a new id if appropriate      |
-| `uncertain`         | Unknown: the connection dropped while the provider had the message, or the container stopped halfway | Do not resend blindly: see below                                          |
-| `receipt`           | A provider's receipt, with the receipt file                                                          | Keep it: it is the legal proof                                            |
-| `mailbox.suspended` | The provider refused the mailbox password                                                            | Fix the password and restart the container. PECs wait safely in the queue |
+| `event`             | Meaning                                                                                                                                    | What to do                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `sent`              | The provider took the PEC. Carries `messageId`, `sentAt`, the provider's answer and `sentCopy`, whether the copy in the Sent folder worked | Wait for the receipts                                                     |
+| `rejected`          | Not sent: the message breaks a rule, `errors` says which                                                                                   | Fix it and publish it again with a new id                                 |
+| `failed`            | Not sent: the provider refused it, or temporary errors lasted too long                                                                     | Read `code` and `detail`; publish again with a new id if appropriate      |
+| `uncertain`         | Unknown: the connection dropped while the provider had the message, or the container stopped halfway                                       | Do not resend blindly: see below                                          |
+| `receipt`           | A provider's receipt, with the receipt file                                                                                                | Keep it: it is the legal proof                                            |
+| `mailbox.suspended` | The provider refused the mailbox password                                                                                                  | Fix the password and restart the container. PECs wait safely in the queue |
 
 The outcomes of a PEC carry `id`, `reference` and `batch`. Receipts carry only `id`: the CRM finds the rest from it.
 
@@ -202,11 +202,13 @@ while ($channel->is_consuming()) {
 ## Rules
 
 1. **A new id for every PEC,** also when sending again.
-2. **Copies happen.** Queues deliver every event at least once, not exactly once. The CRM keeps the `eventId`s it has processed and discards copies: the same fact always has the same `eventId`.
+2. **Copies happen, receipts included.** At every restart the container reads the receipts of the last 72 hours again, as it remembers nothing, and publishes them again with the same `eventId`. Queues deliver every event at least once, not exactly once. The CRM keeps the `eventId`s it has processed and discards copies: the same fact always has the same `eventId`.
 3. **Order is not guaranteed.** An acceptance receipt can arrive before the `sent` event of the same PEC.
 4. **An `uncertain` PEC is not sent again blindly.** Its receipts keep coming: if the acceptance arrives, the PEC had left. The mailbox's Sent folder tells too. Only when sure it did not leave, publish it again with a new id.
 5. **Receipts are kept by the CRM.** The service keeps no copy. They also stay in the PEC mailbox at the provider, as the service deletes nothing, but only until someone deletes them or the space runs out.
 6. **Acknowledge to RabbitMQ only after storing.**
+7. **A PEC back in the queue after an interruption is never resent blindly.** If the container stopped while handling it, on restart it looks in the mailbox for a receipt of the provider about that PEC. Found: `sent` with `confirmedBy: "ACCEPTANCE_RECEIPT"`, `attempts: 0` and `sentCopy: "UNKNOWN"`. Not found within a few minutes: `uncertain`.
+8. **A suspended mailbox loses no PEC.** When the provider refuses the password, the container publishes `mailbox.suspended`, puts the PEC in hand back in the queue and takes no other until it is restarted with the right password.
 
 ## Codes
 

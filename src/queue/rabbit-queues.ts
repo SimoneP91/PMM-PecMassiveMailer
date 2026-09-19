@@ -162,6 +162,16 @@ export class RabbitQueues implements Queues {
     });
   }
 
+  public async returnToQueue(body: unknown): Promise<void> {
+    await this.publisher.send({ routingKey: this.settings.input, durable: true }, body);
+  }
+
+  public async stopConsuming(): Promise<void> {
+    const consumer = this.consumer;
+    this.consumer = undefined;
+    await consumer?.close();
+  }
+
   public isReady(): boolean {
     return this.connection.ready;
   }

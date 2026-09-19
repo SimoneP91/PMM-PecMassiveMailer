@@ -12,9 +12,9 @@ Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messagg
 | ----- | ------------------------------------------------------------------------------------------------------------- | -------- |
 | 1     | contratto dei messaggi: documento AsyncAPI e guide                                                            | fatto    |
 | 2     | pulizia, configurazione da variabili d'ambiente, collegamento a RabbitMQ e code, sonde, stack locale, comandi | fatto    |
-| 3     | invio: controlli, SMTP, copia in Inviata, ritmo, ritentativi, esiti, PEC riconsegnate                         | prossimo |
-| 4     | ricevute: lettura della casella, eventi delle ricevute                                                        |          |
-| 5     | documentazione e collaudo su caselle reali                                                                    |          |
+| 3     | invio: controlli, SMTP, copia in Inviata, ritmo, ritentativi, esiti, PEC riconsegnate                         | fatto    |
+| 4     | ricevute: lettura della casella, eventi delle ricevute                                                        | fatto    |
+| 5     | documentazione e collaudo su caselle reali                                                                    | prossimo |
 
 ## Tecnologie
 
@@ -28,7 +28,7 @@ docker compose up --build
 ```
 
 - Pagina di RabbitMQ: http://localhost:15672 (utente `pecmailer`, password `pecmailer`), con tre code per casella: `pecmailer.serfin.serfin-aruba.in`, `.out`, `.dead`, e le stesse per `serfin-legalmail`.
-- Greenmail, il finto gestore PEC: http://localhost:8080
+- Greenmail, il finto gestore PEC, solo dello stack locale: in produzione non esiste. Riceve le PEC in SMTP (porta 3025) e le tiene in caselle che si leggono in IMAP (porta 3143, qualunque password). La pagina su http://localhost:8080 documenta la sua interfaccia per i programmi; i messaggi di una casella sono su http://localhost:8080/api/user/destinatario@pec.example/messages/INBOX, oppure in un programma di posta collegato a `localhost:3143`.
 - Sonde: http://localhost:3001/health/ready (serfin-aruba), http://localhost:3002/health/ready (serfin-legalmail)
 
 Per fare la parte del CRM da questa macchina, con le impostazioni di [examples/local.env](examples/local.env):
@@ -40,7 +40,7 @@ npm run local:publish -- examples/pec.json --mailbox serfin-legalmail
 npm run local:outcomes -- --follow                               # cosa è successo, man mano (Ctrl+C per fermare)
 ```
 
-Fino al passo 3 i container non prendono ancora le PEC: una PEC pubblicata resta in attesa nella coda di ingresso.
+I container spediscono tramite Greenmail: la PEC arriva nella casella di `destinatario@pec.example`, la sua copia nella cartella Inviata del mittente, il suo esito nella coda di uscita. Greenmail non emette ricevute: per vedere gli eventi delle ricevute bisogna mettere delle ricevute nella casella del mittente, come fanno i test di integrazione. `npm run local:outcomes -- --save data/esiti` scrive in una cartella ogni evento e il file `.eml` di ogni ricevuta.
 
 Operazioni, dentro un container oppure con un `.env` (vedi [.env.example](.env.example)):
 
@@ -84,7 +84,7 @@ examples/        una PEC e le impostazioni per provare lo stack locale
 
 ## Messa in produzione
 
-Un Deployment per ogni coppia cliente-casella, con una sola copia: la coda di ingresso lascia comunque prendere le PEC a un solo lettore alla volta. Variabili da una ConfigMap, e da un Secret per la password della casella e `RABBITMQ_URL`. Sonde `/health/live` e `/health/ready` sulla porta 3001. Nessun volume: il file system può essere in sola lettura.
+Un Deployment per ogni coppia cliente-casella, con una sola copia: la coda di ingresso lascia comunque prendere le PEC a un solo lettore alla volta. Variabili da una ConfigMap, e da un Secret per la password della casella e `RABBITMQ_URL`. Sonde `/health/live` e `/health/ready` sulla porta 3001; la prontezza è falsa finché la casella è sospesa per una password rifiutata, la vitalità solo quando una gestione è bloccata. `terminationGracePeriodSeconds: 120`: allo stop il container finisce la PEC che ha in mano, entro i tempi massimi di SMTP. Nessun volume: il file system può essere in sola lettura.
 
 Il container crea le sue code all'avvio. Se l'infrastruttura preferisce crearle lei, usa gli stessi parametri (vedi [docs/asyncapi.yaml](docs/asyncapi.yaml)) e imposta `PECMAILER_DECLARE_QUEUES=false`.
 

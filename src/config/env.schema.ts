@@ -75,6 +75,8 @@ export const envSchema = z.object({
 
       return list;
     }),
+  // A PEC delivered again after an interruption: how long to look for its receipt before calling it uncertain.
+  PECMAILER_REDELIVERY_WAIT_SECONDS: z.coerce.number().int().min(0).max(1200).default(300),
   PECMAILER_UNVERIFIED_RECIPIENTS: z.enum(['reject', 'send']).default('reject'),
   PECMAILER_PEC_DOMAINS: commaList,
   PECMAILER_PEC_MX_SUFFIXES: commaList,

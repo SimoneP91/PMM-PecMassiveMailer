@@ -1,18 +1,20 @@
 import type { Server } from 'node:http';
 
+import { startContainer } from './app/container';
 import { startHealthServer } from './app/health-server';
 import { createLogger } from './common/logger';
 import { ConfigError, loadConfig, type Config } from './config/config';
-import { RabbitQueues } from './queue/rabbit-queues';
 
 /**
- * The container: one tenant, one mailbox, three queues.
+ * The container: one tenant, one mailbox, three queues. Takes PECs from the
+ * input queue, sends them, reports each outcome on the output queue.
  *
- * Stage 6, phase 2: the skeleton. It connects to RabbitMQ, declares the
- * queues and answers the probes; taking PECs from the input queue comes
- * with phase 3, reading receipts with phase 4.
+ * On SIGTERM it stops taking PECs, finishes the one in hand (an SMTP dialogue
+ * is never cut on purpose: the provider may already have the message) and
+ * exits. The SMTP timeouts bound that wait; give the pod a termination grace
+ * period of at least two minutes.
  */
-const SHUTDOWN_GRACE_MS = 45_000;
+const SHUTDOWN_GRACE_MS = 110_000;
 
 function readConfig(): Config {
   try {
@@ -36,18 +38,21 @@ async function main(): Promise<void> {
   });
   let stopping = false;
 
-  const queues = new RabbitQueues(config.queues, logger);
-  await queues.prepare();
+  const container = await startContainer(config, logger);
   let health: Server | undefined;
   if (config.health.port !== 0) {
     health = await startHealthServer(config.health.host, config.health.port, {
-      live: () => true,
-      ready: () => ({ rabbitmq: queues.isReady(), running: !stopping }),
+      live: () => container.isAlive(),
+      ready: () => ({
+        rabbitmq: container.queues.isReady(),
+        mailbox: container.suspension.cause === undefined,
+        running: !stopping,
+      }),
     });
   }
   logger.info(
-    { input: config.queues.input, output: config.queues.output },
-    'pecmailer started (skeleton: queues declared, not taking PECs yet)',
+    { input: config.queues.input, output: config.queues.output, perMinute: config.mailbox.limits.perMinute },
+    'pecmailer started: taking PECs',
   );
 
   const shutdown = (signal: string): void => {
@@ -55,16 +60,16 @@ async function main(): Promise<void> {
       return;
     }
     stopping = true;
-    logger.info({ signal }, 'stopping');
+    logger.info({ signal }, 'stopping: finishing the PEC in hand');
     const grace = setTimeout(() => {
       logger.error('shutdown took too long; exiting');
       process.exit(1);
     }, SHUTDOWN_GRACE_MS);
     grace.unref();
-    void queues
-      .close()
+    void container
+      .stop()
       .catch((error: unknown) => {
-        logger.error({ err: error }, 'error while closing the queues');
+        logger.error({ err: error }, 'error while stopping');
       })
       .finally(() => {
         health?.close();

@@ -57,7 +57,11 @@ describe('loadConfig', () => {
     });
     // IMAP logs in with the SMTP credentials unless told otherwise.
     expect(config.mailbox.imap?.password.reveal()).toBe(SMTP_PASSWORD);
-    expect(config.sending).toEqual({ retryBackoffSeconds: [60, 300, 900], unverifiedRecipients: 'reject' });
+    expect(config.sending).toEqual({
+      retryBackoffSeconds: [60, 300, 900],
+      redeliveryWaitSeconds: 300,
+      unverifiedRecipients: 'reject',
+    });
     expect(config.receipts).toEqual({ pollIntervalSeconds: 60, lookbackHours: 72, maxPerPoll: 200 });
   });
 

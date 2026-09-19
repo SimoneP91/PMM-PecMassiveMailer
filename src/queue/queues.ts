@@ -41,6 +41,15 @@ export interface Queues {
   publish(event: OutputEvent): Promise<void>;
   /** Starts taking messages from the input queue, one at a time. */
   consume(handler: InputHandler): void;
+  /**
+   * Puts a message back at the end of the input queue as a new one. Only for
+   * a PEC that certainly did not leave (shutdown before sending, mailbox
+   * suspended): a message returned the ordinary way comes back marked
+   * "redelivered", and would be treated as possibly sent.
+   */
+  returnToQueue(body: unknown): Promise<void>;
+  /** Stops taking messages (a suspended mailbox); the one in hand is finished first. */
+  stopConsuming(): Promise<void>;
   /** Connected and able to publish: what the readiness probe reports. */
   isReady(): boolean;
   /** Stops taking messages, waits for the one in hand, closes. */

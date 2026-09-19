@@ -73,6 +73,8 @@ export interface Config {
   readonly sending: {
     /** Waits before attempt 2, 3, ... of a temporary failure. */
     readonly retryBackoffSeconds: readonly number[];
+    /** A PEC delivered again after an interruption: how long its receipt is looked for. */
+    readonly redeliveryWaitSeconds: number;
     readonly unverifiedRecipients: 'reject' | 'send';
   };
   readonly recipients: RecipientLists;
@@ -217,6 +219,7 @@ export function loadConfig(source: Source): Config {
     queues: queueSettings(env),
     sending: {
       retryBackoffSeconds: env.PECMAILER_RETRY_BACKOFF_SECONDS,
+      redeliveryWaitSeconds: env.PECMAILER_REDELIVERY_WAIT_SECONDS,
       unverifiedRecipients: env.PECMAILER_UNVERIFIED_RECIPIENTS,
     },
     recipients: {

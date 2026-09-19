@@ -504,18 +504,23 @@ components:
               enum: [SMTP, ACCEPTANCE_RECEIPT]
               description: |
                 SMTP: the provider answered 250. ACCEPTANCE_RECEIPT: the PEC was
-                delivered to the container again after a crash, and its
-                acceptance receipt proved that it had already left.
+                delivered to the container again after an interruption, and a
+                receipt of the provider about it (normally the acceptance) proved
+                that it had already left; nothing was sent again.
             smtpResponse:
               type: string
               description: The provider's final answer, when confirmedBy is SMTP.
             attempts:
               type: integer
               minimum: 0
+              description: SMTP attempts made; 0 when confirmedBy is ACCEPTANCE_RECEIPT.
             sentCopy:
               type: string
-              enum: [ARCHIVED, FAILED, DISABLED]
-              description: Whether a copy was filed in the mailbox's Sent folder.
+              enum: [ARCHIVED, FAILED, DISABLED, UNKNOWN]
+              description: |
+                Whether a copy was filed in the mailbox's Sent folder: DISABLED
+                when IMAP is off, UNKNOWN when the PEC was confirmed by its
+                receipt after an interruption.
             sentCopyError:
               type: string
             warnings:
