@@ -33,7 +33,7 @@ export const envSchema = z.object({
   // Who this container is.
   PECMAILER_TENANT: code,
   PECMAILER_MAILBOX: code,
-  PECMAILER_PROVIDER: z.enum(['aruba', 'legalmail', 'infocert', 'custom']),
+  PECMAILER_PROVIDER: z.enum(['aruba', 'legalmail', 'namirial', 'custom']),
   PECMAILER_FROM_ADDRESS: z.email().max(254),
   PECMAILER_FROM_NAME: z.string().min(1).max(200),
 
@@ -90,7 +90,7 @@ export const envSchema = z.object({
     .int()
     .min(1)
     .max(24 * 30)
-    .default(72),
+    .default(24),
   PECMAILER_RECEIPTS_MAX_PER_POLL: z.coerce.number().int().min(1).max(1000).default(200),
 
   // RabbitMQ.

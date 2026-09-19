@@ -38,13 +38,15 @@ describe('declarations', () => {
     }
   });
 
-  it('gives the input queue one active consumer, a delivery limit and the dead-letter queue', () => {
+  it('gives the input queue one active consumer, a delivery limit and at-least-once dead-lettering', () => {
     expect(declarations(settings).input.arguments).toEqual({
       'x-queue-type': 'quorum',
       'x-single-active-consumer': true,
       'x-delivery-limit': 5,
       'x-dead-letter-exchange': '',
       'x-dead-letter-routing-key': 'p.serfin.serfin-aruba.dead',
+      'x-dead-letter-strategy': 'at-least-once',
+      'x-overflow': 'reject-publish',
     });
   });
 });

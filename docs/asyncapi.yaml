@@ -36,9 +36,15 @@ channels:
     title: PEC to send
     description: |
       One PEC per message. Quorum queue (replicated, messages survive a
-      broker restart), declared by the container at start-up if missing,
-      with a delivery limit: a message delivered too many times without being
-      acknowledged goes to the dead-letter queue.
+      broker restart), declared by the container at start-up if missing, with
+      these arguments (the infrastructure uses exactly these when it creates
+      the queue itself, PECMAILER_DECLARE_QUEUES=false):
+      x-queue-type quorum, x-single-active-consumer true, x-delivery-limit 5,
+      x-dead-letter-exchange "" (the default exchange),
+      x-dead-letter-routing-key pecmailer.{tenant}.{mailbox}.dead,
+      x-dead-letter-strategy at-least-once, x-overflow reject-publish.
+      A message delivered too many times without being acknowledged goes to
+      the dead-letter queue, and leaves this one only once that queue has it.
     parameters:
       tenant:
         description: Code of the tenant, e.g. `serfin`.
@@ -554,8 +560,9 @@ components:
               type: string
               description: |
                 SMTP_<code> for a permanent refusal (e.g. SMTP_550),
-                RETRIES_EXHAUSTED when temporary errors lasted longer than the
-                retry window.
+                RETRIES_EXHAUSTED when temporary errors persist at the last
+                attempt (about 21 minutes after the first, with the default
+                waits).
             smtpCode:
               type: integer
             detail:

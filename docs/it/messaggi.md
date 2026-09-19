@@ -202,13 +202,14 @@ while ($channel->is_consuming()) {
 ## Regole da rispettare
 
 1. **Un id nuovo per ogni PEC,** anche quando si rispedisce.
-2. **I doppioni arrivano, anche per le ricevute.** A ogni riavvio il container rilegge le ricevute delle ultime 72 ore, perché non ricorda dove era arrivato, e le ripubblica con lo stesso `eventId`. Le code consegnano ogni evento almeno una volta, non esattamente una. Il CRM tiene gli `eventId` già trattati e scarta le copie: lo stesso fatto ha sempre lo stesso `eventId`.
+2. **I doppioni arrivano, anche per le ricevute.** A ogni riavvio il container rilegge le ricevute delle ultime 24 ore, perché non ricorda dove era arrivato, e le ripubblica con lo stesso `eventId`. Le code consegnano ogni evento almeno una volta, non esattamente una. Il CRM tiene gli `eventId` già trattati e scarta le copie: lo stesso fatto ha sempre lo stesso `eventId`.
 3. **L'ordine non è garantito.** Una ricevuta di accettazione può arrivare prima dell'evento `sent` della stessa PEC.
 4. **Una PEC `uncertain` non si rispedisce alla cieca.** Le sue ricevute continuano ad arrivare: se arriva l'accettazione, la PEC era partita. Si può anche guardare la cartella Inviata della casella. Solo se si è sicuri che non è partita, si ripubblica con un id nuovo.
 5. **Le ricevute si conservano.** Il servizio non ne tiene copia. Restano anche nella casella PEC presso il gestore, perché il servizio non cancella nulla, ma solo finché qualcuno non le cancella o finisce lo spazio.
 6. **La conferma a RabbitMQ va data solo dopo aver salvato.**
 7. **Una PEC tornata in coda dopo un'interruzione non viene mai rispedita alla cieca.** Se il container si è fermato mentre la gestiva, al riavvio cerca nella casella una ricevuta del gestore per quella PEC. Se la trova, pubblica `sent` con `confirmedBy: "ACCEPTANCE_RECEIPT"`, `attempts: 0` e `sentCopy: "UNKNOWN"`. Se non la trova entro qualche minuto, pubblica `uncertain`.
 8. **Una casella sospesa non perde le PEC.** Se il gestore rifiuta la password, il container pubblica `mailbox.suspended`, rimette in coda la PEC che aveva in mano e non ne prende altre finché non viene riavviato con la password giusta.
+9. **In casi rarissimi una PEC riceve due esiti diversi.** Succede se il container si ferma nell'istante fra la pubblicazione di un esito e la conferma a RabbitMQ: al riavvio la PEC torna in coda e riceve un secondo esito, per esempio `failed` e poi `uncertain`. Si tratta come un `uncertain`: le ricevute dicono com'è andata.
 
 ## Codici
 
@@ -234,7 +235,7 @@ Negli eventi `rejected`, ogni voce di `errors` ha `code`, `field` e `detail`.
 
 Negli eventi `sent`, l'avviso `UNUSED_INLINE_IMAGE` segnala un'immagine allegata ma non usata nel testo: la PEC parte lo stesso.
 
-Negli eventi `failed`, `code` è `SMTP_` seguito dal codice del gestore, per esempio `SMTP_550`, oppure `RETRIES_EXHAUSTED` quando gli errori temporanei sono durati più di 30 minuti.
+Negli eventi `failed`, `code` è `SMTP_` seguito dal codice del gestore, per esempio `SMTP_550`, oppure `RETRIES_EXHAUSTED` quando gli errori temporanei continuano anche all'ultimo tentativo: con le impostazioni normali, circa 21 minuti dopo il primo.
 
 ## Cosa il servizio non fa
 

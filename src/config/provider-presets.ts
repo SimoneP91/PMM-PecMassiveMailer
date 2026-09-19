@@ -9,16 +9,27 @@ export interface TransportPreset {
 export interface ProviderPreset {
   readonly displayName: string;
   readonly smtp: TransportPreset;
-  readonly imap: TransportPreset & { readonly sentFolder: string };
+  /** No sentFolder: not known for this provider, PECMAILER_IMAP_SENT_FOLDER must say it. */
+  readonly imap: TransportPreset & { readonly sentFolder?: string };
   /** What the provider expects as SMTP/IMAP login: the address, or an account code. */
   readonly usernameHint: string;
 }
 
 /**
- * Conventions of the accredited providers, as verified with real sends by the
- * legacy project (18 September 2026). They differ in ways no documentation
- * lists - the Sent folder name, the separator, whether the login is the
- * address or a code - which is why they are data and overridable per mailbox.
+ * Conventions of the accredited providers. They differ in ways no
+ * documentation lists - the Sent folder name, the separator, whether the
+ * login is the address or a code - which is why they are data, and every
+ * value can be overridden per mailbox.
+ *
+ * - Aruba: proven by real sends from this service (19 September 2026).
+ * - Legalmail: servers and port as InfoCert publishes them for mail clients
+ *   (SMTP 465 with TLS: port 25 is often blocked on the way out of cloud
+ *   networks); login and Sent folder from the legacy project. Not yet proven
+ *   by a send from this service.
+ * - Namirial (sicurezzapostale.it): servers as Namirial publishes them; the
+ *   Sent folder is not known, so PECMAILER_IMAP_SENT_FOLDER is required.
+ *
+ * `npm run cli -- probe` checks a mailbox's settings without sending.
  */
 export const PROVIDER_PRESETS: Readonly<Record<Exclude<ProviderName, 'custom'>, ProviderPreset>> = {
   aruba: {
@@ -29,14 +40,14 @@ export const PROVIDER_PRESETS: Readonly<Record<Exclude<ProviderName, 'custom'>, 
   },
   legalmail: {
     displayName: 'Legalmail (InfoCert)',
-    smtp: { host: 'sendm.cert.legalmail.it', port: 25, security: 'starttls' },
+    smtp: { host: 'sendm.cert.legalmail.it', port: 465, security: 'tls' },
     imap: { host: 'mbox.cert.legalmail.it', port: 993, security: 'tls', sentFolder: 'INBOX/Spedite' },
     usernameHint: 'the M... account code, not the address',
   },
-  infocert: {
-    displayName: 'InfoCert PEC',
-    smtp: { host: 'smtp.sicurezzapostale.it', port: 465, security: 'tls' },
-    imap: { host: 'mbox.sicurezzapostale.it', port: 993, security: 'tls', sentFolder: 'INBOX.Sent' },
+  namirial: {
+    displayName: 'Namirial PEC',
+    smtp: { host: 'smtps.sicurezzapostale.it', port: 465, security: 'tls' },
+    imap: { host: 'imaps.sicurezzapostale.it', port: 993, security: 'tls' },
     usernameHint: 'the PEC address',
   },
 };

@@ -114,7 +114,15 @@ export class SendRequestChecker {
     private readonly unverifiedDefault: 'reject' | 'send',
   ) {}
 
-  public async check(body: unknown): Promise<CheckedRequest> {
+  /**
+   * @param options.verifyRecipient false skips the recipient's verdict (DNS
+   *   and lists): for a message that may already have left, see
+   *   PecSender.recover.
+   */
+  public async check(
+    body: unknown,
+    options: { readonly verifyRecipient?: boolean } = {},
+  ): Promise<CheckedRequest> {
     const parsed = sendRequestSchema.safeParse(body);
     if (!parsed.success) {
       return {
@@ -186,12 +194,14 @@ export class SendRequestChecker {
       }
     }
 
-    const verdict = await this.recipients.verify(request.to.address);
-    const unverified = request.options?.unverifiedRecipient ?? this.unverifiedDefault;
-    if (verdict.verdict === 'NOT_PEC') {
-      errors.push({ path: 'to.address', code: 'RECIPIENT_NOT_PEC', detail: verdict.detail });
-    } else if (verdict.verdict === 'UNDETERMINED' && unverified === 'reject') {
-      errors.push({ path: 'to.address', code: 'RECIPIENT_UNVERIFIED', detail: verdict.detail });
+    if (options.verifyRecipient !== false) {
+      const verdict = await this.recipients.verify(request.to.address);
+      const unverified = request.options?.unverifiedRecipient ?? this.unverifiedDefault;
+      if (verdict.verdict === 'NOT_PEC') {
+        errors.push({ path: 'to.address', code: 'RECIPIENT_NOT_PEC', detail: verdict.detail });
+      } else if (verdict.verdict === 'UNDETERMINED' && unverified === 'reject') {
+        errors.push({ path: 'to.address', code: 'RECIPIENT_UNVERIFIED', detail: verdict.detail });
+      }
     }
 
     if (errors.length > 0) {

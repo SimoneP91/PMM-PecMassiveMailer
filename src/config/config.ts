@@ -89,7 +89,8 @@ export interface Config {
 /**
  * RabbitMQ gives up on a consumer that keeps a message unacknowledged for 30
  * minutes (its default consumer timeout). Retries happen while the message is
- * held, so their waits must fit well inside that, sending time included.
+ * held, so their waits, plus one SMTP timeout for each attempt, must fit well
+ * inside that.
  */
 export const MAX_RETRY_WINDOW_SECONDS = 25 * 60;
 
@@ -160,7 +161,11 @@ export function loadConfig(source: Source): Config {
   function pick<T>(explicit: T | undefined, fromPreset: T | undefined, variable: string): T {
     const value = explicit ?? fromPreset;
     if (value === undefined) {
-      problems.push(`${variable}: required when PECMAILER_PROVIDER is "custom"`);
+      problems.push(
+        preset === undefined
+          ? `${variable}: required when PECMAILER_PROVIDER is "custom"`
+          : `${variable}: required, the "${env.PECMAILER_PROVIDER}" preset does not set it`,
+      );
     }
 
     return value as T;
@@ -191,11 +196,14 @@ export function loadConfig(source: Source): Config {
       }
     : null;
 
-  const retryWindow = env.PECMAILER_RETRY_BACKOFF_SECONDS.reduce((sum, wait) => sum + wait, 0);
+  const waits = env.PECMAILER_RETRY_BACKOFF_SECONDS.reduce((sum, wait) => sum + wait, 0);
+  const attempts = env.PECMAILER_RETRY_BACKOFF_SECONDS.length + 1;
+  const retryWindow = waits + attempts * env.PECMAILER_SMTP_TIMEOUT_SECONDS;
   if (retryWindow > MAX_RETRY_WINDOW_SECONDS) {
     problems.push(
-      `PECMAILER_RETRY_BACKOFF_SECONDS: the waits add up to ${String(retryWindow)} s; at most ` +
-        `${String(MAX_RETRY_WINDOW_SECONDS)} s, so a PEC is settled before RabbitMQ's 30-minute consumer timeout`,
+      `PECMAILER_RETRY_BACKOFF_SECONDS: the waits (${String(waits)} s) and one SMTP timeout per attempt ` +
+        `(${String(attempts)} x ${String(env.PECMAILER_SMTP_TIMEOUT_SECONDS)} s) add up to ${String(retryWindow)} s; ` +
+        `at most ${String(MAX_RETRY_WINDOW_SECONDS)} s, so a PEC is settled before RabbitMQ's 30-minute consumer timeout`,
     );
   }
   if (problems.length > 0) {

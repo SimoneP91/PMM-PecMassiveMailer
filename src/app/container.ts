@@ -120,7 +120,10 @@ export async function startContainer(
     isAlive: () => sender.isAlive() && (reader?.isAlive() ?? true),
     stop: async () => {
       stopping.abort();
-      await reading;
+      // Stop taking PECs at once, while the reader winds down: a PEC taken now
+      // would only go back to the queue, and one caught on its way to the
+      // container would come back marked "delivered before".
+      await Promise.all([queues.stopConsuming(), reading]);
       await queues.close();
       await sender.close();
     },

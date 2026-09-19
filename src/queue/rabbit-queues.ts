@@ -20,7 +20,16 @@ type QueueDeclaration = Parameters<Connection['queueDeclare']>[0] & object & { r
  * - x-single-active-consumer: if two containers of the same mailbox run at
  *   once (a rolling update), only one of them takes PECs;
  * - x-delivery-limit and dead-lettering: a message delivered too many times
- *   without an outcome goes to the dead-letter queue instead of looping.
+ *   without an outcome goes to the dead-letter queue instead of looping;
+ * - dead-lettering "at least once": the message leaves the input queue only
+ *   once the dead-letter queue has stored it (the default, "at most once",
+ *   loses it if that queue is unavailable at that moment). RabbitMQ requires
+ *   x-overflow reject-publish for it; with no length limit set, it never
+ *   refuses a publish.
+ *
+ * RabbitMQ refuses to declare a queue that exists with other arguments: a
+ * queue created by an earlier version must be deleted (empty) and declared
+ * again, or created by the infrastructure with exactly these arguments.
  */
 export function declarations(settings: QueueSettings): {
   readonly input: QueueDeclaration;
@@ -41,6 +50,8 @@ export function declarations(settings: QueueSettings): {
         'x-delivery-limit': settings.deliveryLimit,
         'x-dead-letter-exchange': '',
         'x-dead-letter-routing-key': settings.dead,
+        'x-dead-letter-strategy': 'at-least-once',
+        'x-overflow': 'reject-publish',
       },
     },
   };
@@ -73,6 +84,8 @@ export class RabbitQueues implements Queues {
   private readonly connection: Connection;
   private readonly publisher: Publisher;
   private consumer: Consumer | undefined;
+  /** Set once the container stops taking messages: a failed handling is then given back without the pause. */
+  private stopping = false;
 
   public constructor(
     private readonly settings: QueueSettings,
@@ -147,11 +160,15 @@ export class RabbitQueues implements Queues {
 
           return verdict === 'done' ? ConsumerStatus.ACK : ConsumerStatus.DROP;
         } catch (error: unknown) {
+          // While stopping no other message is taken, so nothing can spin: no reason to delay the exit.
+          const pauseMs = this.stopping ? 0 : this.options.failurePauseMs;
           this.logger.error(
-            { err: error, redelivered: message.redelivered, pauseMs: this.options.failurePauseMs },
-            'handling failed: the message goes back to the queue after a pause',
+            { err: error, redelivered: message.redelivered, pauseMs },
+            'handling failed: the message goes back to the queue',
           );
-          await new Promise((resolve) => setTimeout(resolve, this.options.failurePauseMs));
+          if (pauseMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, pauseMs));
+          }
 
           return ConsumerStatus.REQUEUE;
         }
@@ -167,6 +184,7 @@ export class RabbitQueues implements Queues {
   }
 
   public async stopConsuming(): Promise<void> {
+    this.stopping = true;
     const consumer = this.consumer;
     this.consumer = undefined;
     await consumer?.close();
@@ -177,6 +195,7 @@ export class RabbitQueues implements Queues {
   }
 
   public async close(): Promise<void> {
+    this.stopping = true;
     await this.consumer?.close();
     await this.publisher.close();
     await this.connection.close();

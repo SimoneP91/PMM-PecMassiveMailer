@@ -202,13 +202,14 @@ while ($channel->is_consuming()) {
 ## Rules
 
 1. **A new id for every PEC,** also when sending again.
-2. **Copies happen, receipts included.** At every restart the container reads the receipts of the last 72 hours again, as it remembers nothing, and publishes them again with the same `eventId`. Queues deliver every event at least once, not exactly once. The CRM keeps the `eventId`s it has processed and discards copies: the same fact always has the same `eventId`.
+2. **Copies happen, receipts included.** At every restart the container reads the receipts of the last 24 hours again, as it remembers nothing, and publishes them again with the same `eventId`. Queues deliver every event at least once, not exactly once. The CRM keeps the `eventId`s it has processed and discards copies: the same fact always has the same `eventId`.
 3. **Order is not guaranteed.** An acceptance receipt can arrive before the `sent` event of the same PEC.
 4. **An `uncertain` PEC is not sent again blindly.** Its receipts keep coming: if the acceptance arrives, the PEC had left. The mailbox's Sent folder tells too. Only when sure it did not leave, publish it again with a new id.
 5. **Receipts are kept by the CRM.** The service keeps no copy. They also stay in the PEC mailbox at the provider, as the service deletes nothing, but only until someone deletes them or the space runs out.
 6. **Acknowledge to RabbitMQ only after storing.**
 7. **A PEC back in the queue after an interruption is never resent blindly.** If the container stopped while handling it, on restart it looks in the mailbox for a receipt of the provider about that PEC. Found: `sent` with `confirmedBy: "ACCEPTANCE_RECEIPT"`, `attempts: 0` and `sentCopy: "UNKNOWN"`. Not found within a few minutes: `uncertain`.
 8. **A suspended mailbox loses no PEC.** When the provider refuses the password, the container publishes `mailbox.suspended`, puts the PEC in hand back in the queue and takes no other until it is restarted with the right password.
+9. **Very rarely a PEC gets two different outcomes.** It happens when the container stops in the instant between publishing an outcome and confirming it to RabbitMQ: after the restart the PEC comes back and gets a second outcome, e.g. `failed` then `uncertain`. Treat it as `uncertain`: the receipts tell what happened.
 
 ## Codes
 
@@ -234,7 +235,7 @@ In `rejected` events every entry of `errors` has `code`, `field` and `detail`.
 
 In `sent` events the warning `UNUSED_INLINE_IMAGE` flags an image given but not used in the text: the PEC leaves anyway.
 
-In `failed` events `code` is `SMTP_` followed by the provider's code, e.g. `SMTP_550`, or `RETRIES_EXHAUSTED` when temporary errors lasted more than 30 minutes.
+In `failed` events `code` is `SMTP_` followed by the provider's code, e.g. `SMTP_550`, or `RETRIES_EXHAUSTED` when temporary errors persist at the last attempt: about 21 minutes after the first, with the default settings.
 
 ## What the service does not do
 

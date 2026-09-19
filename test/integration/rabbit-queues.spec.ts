@@ -207,6 +207,36 @@ describe('RabbitQueues against RabbitMQ', () => {
     expect((at[1] ?? 0) - (at[0] ?? 0)).toBeGreaterThanOrEqual(PAUSE_MS - 20);
   });
 
+  it('gives a failed message back without the pause once it is stopping, so the exit is not delayed', async () => {
+    const config = settings();
+    const instance = new RabbitQueues(config, logger, { failurePauseMs: 5_000 });
+    open.push(instance);
+    await instance.prepare();
+    await put(config.input, { id: 'last' });
+    const stopping: Promise<void>[] = [];
+
+    instance.consume(() => {
+      // Like a shutdown while a redelivered PEC's receipt is looked for: stop, and give it back.
+      stopping.push(instance.stopConsuming());
+
+      return Promise.reject(new Error('stopping while looking for the receipt'));
+    });
+
+    await eventually(
+      () => Promise.resolve(stopping.length),
+      (n) => n === 1,
+    );
+    const started = Date.now();
+    await stopping[0];
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(
+      await eventually(
+        () => depth(config.input),
+        (n) => n === 1,
+      ),
+    ).toBe(1);
+  });
+
   it('moves an unreadable message to the dead-letter queue, as it arrived', async () => {
     const config = settings();
     const instance = queues(config);

@@ -10,7 +10,8 @@ import tseslint from 'typescript-eslint';
  */
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'oldProject/**'],
+    // data/ holds local, untracked files (collaudo outputs, one-off scripts).
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'oldProject/**', 'data/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,

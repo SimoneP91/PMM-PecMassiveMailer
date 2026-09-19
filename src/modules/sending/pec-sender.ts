@@ -2,10 +2,10 @@ import type { Logger } from '../../common/logger';
 import type { Clock } from '../../common/time/clock';
 import type { ResolvedMailbox } from '../../config/config';
 import type { HandlerVerdict, InputMessage, OutputEvent, Queues } from '../../queue/queues';
-import { ReceiptSourceAuthError } from '../receipts/receipt-source';
 import type { ProofLookup } from '../receipts/sent-proof';
+import { ImapAuthError } from './imap/imap-auth-error';
 import type { SentArchiver, SentArchiverFactory } from './imap/sent-archiver';
-import type { EmlBuilder } from './mime/eml-builder';
+import { messageIdFor, type EmlBuilder } from './mime/eml-builder';
 import type { MailboxSuspension } from './mailbox-suspension';
 import { problemOf, type OutcomeEvents, type SentCopyState } from './outcome-events';
 import type { Pace } from './pace';
@@ -130,6 +130,7 @@ export class PecSender {
     }
     const built = await eml.build(checked.pec, mailbox);
     if (built.raw.length > mailbox.limits.maxMessageBytes) {
+      logger.info({ id: labels.id, codes: ['MESSAGE_TOO_LARGE'] }, 'PEC rejected');
       await this.publish(
         events.rejected(labels, [
           {
@@ -239,20 +240,24 @@ export class PecSender {
 
   /**
    * A message delivered again: the previous handling was interrupted and may
-   * have sent it. A message that breaks a rule was certainly never sent; for
-   * the others, the provider's receipt decides.
+   * have sent it. A message that breaks a rule of its own content was
+   * certainly never sent; for the others, the provider's receipt decides.
+   *
+   * The recipient is not judged again: that verdict depends on DNS and on the
+   * lists of the day, and a PEC that did leave could fail it now (a DNS
+   * timeout, a list changed by a new version). Reported "rejected", it would
+   * be sent a second time.
    */
   private async recover(body: unknown, labels: PecLabels): Promise<HandlerVerdict> {
-    const { checker, eml, mailbox, events, proof, clock, sleeper, logger, redeliveryWaitSeconds, signal } =
+    const { checker, mailbox, events, proof, clock, sleeper, logger, redeliveryWaitSeconds, signal } =
       this.deps;
-    const checked = await checker.check(body);
+    const checked = await checker.check(body, { verifyRecipient: false });
     if (!checked.ok) {
       await this.publish(events.rejected(labels, checked.errors));
 
       return 'done';
     }
-    const built = await eml.build(checked.pec, mailbox);
-    const messageId = built.messageIdHeader;
+    const messageId = messageIdFor(checked.pec.id, mailbox.from.address);
     const uncertain = (detail: string): OutputEvent =>
       events.uncertain(labels, { messageId, reason: 'REDELIVERED_WITHOUT_ACCEPTANCE', detail });
 
@@ -270,7 +275,7 @@ export class PecSender {
       try {
         found = await proof.find(messageId);
       } catch (error: unknown) {
-        if (error instanceof ReceiptSourceAuthError) {
+        if (error instanceof ImapAuthError) {
           await this.deps.suspension.suspend('IMAP_AUTH_REFUSED', error.message);
           await this.publish(
             uncertain('delivered again after an interruption; the mailbox refused the IMAP login'),
@@ -341,7 +346,13 @@ export class PecSender {
       return { sentCopy: 'ARCHIVED' };
     } catch (error: unknown) {
       const detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
-      this.deps.logger.warn({ detail }, 'the copy in the Sent folder failed; the PEC left anyway');
+      if (error instanceof ImapAuthError) {
+        // The PEC left. The refused login stops the mailbox now, before one
+        // attempt per PEC gets the account locked.
+        await this.deps.suspension.suspend('IMAP_AUTH_REFUSED', detail);
+      } else {
+        this.deps.logger.warn({ detail }, 'the copy in the Sent folder failed; the PEC left anyway');
+      }
 
       return { sentCopy: 'FAILED', sentCopyError: detail };
     }

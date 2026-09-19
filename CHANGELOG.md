@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-19
+
+Review of stage 6. Two changes need action where the service already runs: the provider `infocert` is now `namirial`, and the input queues must be recreated (their arguments changed).
+
+### Fixed
+
+- Shutdown: the container stops taking PECs as soon as it is asked to stop. Before, it kept taking them while the receipt reader finished its pass, put them back at the end of the queue, and one could come back marked "delivered before": after the restart, a five-minute wait and a false `uncertain` for a PEC never sent.
+- A PEC delivered again after an interruption is no longer judged on its recipient: a DNS lookup failing at that moment turned a PEC that may have left into `rejected`, and the CRM would have sent it again. Only the rules of the message itself and the provider's receipt decide.
+- A refused IMAP login during the copy in the Sent folder suspends the mailbox at once, instead of one refused login per PEC until the receipt reader noticed.
+- A failed handling is given back without the 10-second pause once the container is stopping.
+- The `infocert` preset pointed at Namirial's domain with wrong server names: it is replaced by `namirial` (smtps/imaps.sicurezzapostale.it, as Namirial publishes them; the Sent folder must be set with `PECMAILER_IMAP_SENT_FOLDER`).
+
+### Changed
+
+- Legalmail preset: SMTP on port 465 with TLS, as InfoCert publishes it (was 25 with STARTTLS, often blocked on the way out of cloud networks). To be confirmed by the Legalmail collaudo.
+- Input queue: dead-lettering at least once (`x-dead-letter-strategy: at-least-once`, which requires `x-overflow: reject-publish`): a message leaves the input queue only once the dead-letter queue has stored it. An existing input queue must be deleted (empty) and declared again.
+- `PECMAILER_RECEIPTS_LOOKBACK_HOURS` defaults to 24 (was 72): a restart during a campaign re-published every receipt of three days, delivery receipts with their attachments included.
+- `PECMAILER_RETRY_BACKOFF_SECONDS` is checked with one SMTP timeout per attempt added to the waits: the defaults fit exactly (25 minutes); a longer timeout needs shorter waits.
+- Guides: `RETRIES_EXHAUSTED` comes about 21 minutes after the first attempt with the defaults (they said 30); a new rule on the rare PEC with two different outcomes.
+
 ## [0.6.0] - 2026-09-19
 
 Stage 6: from an HTTP API with a database to queues. Breaking: the HTTP API, API keys, webhooks and the configuration file are gone; the service is driven by RabbitMQ (see docs/asyncapi.yaml). Verified on a real Aruba mailbox: sending, the Sent copy, acceptance, delivery and non-delivery receipts, and the same receipt events after a restart.

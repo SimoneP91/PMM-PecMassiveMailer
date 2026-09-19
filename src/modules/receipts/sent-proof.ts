@@ -1,8 +1,8 @@
 import { ImapFlow } from 'imapflow';
 
 import type { ResolvedImap } from '../../config/config';
+import { ImapAuthError, isImapAuthFailure } from '../sending/imap/imap-auth-error';
 import { parseReceipt, type ReceiptType } from './receipt-parser';
-import { ReceiptSourceAuthError } from './receipt-source';
 
 export interface SentProof {
   readonly type: ReceiptType;
@@ -38,10 +38,7 @@ export class ImapProofLookup implements ProofLookup {
     try {
       await client.connect();
     } catch (error: unknown) {
-      if ((error as { authenticationFailed?: unknown }).authenticationFailed === true) {
-        throw new ReceiptSourceAuthError('IMAP login refused');
-      }
-      throw error;
+      throw isImapAuthFailure(error) ? new ImapAuthError() : error;
     }
 
     try {

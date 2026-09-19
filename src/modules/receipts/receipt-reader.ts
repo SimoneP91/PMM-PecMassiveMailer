@@ -2,13 +2,14 @@ import type { Logger } from '../../common/logger';
 import type { Clock } from '../../common/time/clock';
 import type { ResolvedImap, ResolvedMailbox } from '../../config/config';
 import type { Queues } from '../../queue/queues';
+import { ImapAuthError } from '../sending/imap/imap-auth-error';
 import type { MailboxSuspension } from '../sending/mailbox-suspension';
 import { idFromMessageId } from '../sending/mime/eml-builder';
 import { LoopPulse } from '../sending/loop-pulse';
 import type { OutcomeEvents } from '../sending/outcome-events';
 import type { Sleeper } from '../sending/sleeper';
 import { mayBeReceipt, parseReceipt } from './receipt-parser';
-import { ReceiptSourceAuthError, type ReceiptSourceFactory, type SourceMail } from './receipt-source';
+import type { ReceiptSourceFactory, SourceMail } from './receipt-source';
 
 export interface ReceiptReaderDeps {
   readonly mailbox: ResolvedMailbox;
@@ -120,7 +121,7 @@ export class ReceiptReader {
         },
       );
     } catch (error: unknown) {
-      if (error instanceof ReceiptSourceAuthError) {
+      if (error instanceof ImapAuthError) {
         await suspension.suspend('IMAP_AUTH_REFUSED', error.message);
       } else if (!(error instanceof PassInterrupted)) {
         logger.warn({ err: error }, 'the receipts folder could not be read; trying again at the next pass');

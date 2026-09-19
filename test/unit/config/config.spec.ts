@@ -62,7 +62,7 @@ describe('loadConfig', () => {
       redeliveryWaitSeconds: 300,
       unverifiedRecipients: 'reject',
     });
-    expect(config.receipts).toEqual({ pollIntervalSeconds: 60, lookbackHours: 72, maxPerPoll: 200 });
+    expect(config.receipts).toEqual({ pollIntervalSeconds: 60, lookbackHours: 24, maxPerPoll: 200 });
   });
 
   it('names the three queues after the tenant and the mailbox', () => {
@@ -108,6 +108,23 @@ describe('loadConfig', () => {
     ]);
   });
 
+  it('uses the servers Legalmail and Namirial publish, and asks for what a preset does not know', () => {
+    expect(loadConfig(env({ PECMAILER_PROVIDER: 'legalmail' })).mailbox.smtp).toMatchObject({
+      host: 'sendm.cert.legalmail.it',
+      port: 465,
+      security: 'tls',
+    });
+    expect(problemsOf(env({ PECMAILER_PROVIDER: 'namirial' }))).toEqual([
+      'PECMAILER_IMAP_SENT_FOLDER: required, the "namirial" preset does not set it',
+    ]);
+    expect(
+      loadConfig(env({ PECMAILER_PROVIDER: 'namirial', PECMAILER_IMAP_SENT_FOLDER: 'INBOX.Sent' })).mailbox,
+    ).toMatchObject({
+      smtp: { host: 'smtps.sicurezzapostale.it', port: 465, security: 'tls' },
+      imap: { host: 'imaps.sicurezzapostale.it', port: 993, security: 'tls', sentFolder: 'INBOX.Sent' },
+    });
+  });
+
   it('turns IMAP off when asked: no Sent copy, no receipts', () => {
     expect(loadConfig(env({ PECMAILER_IMAP_ENABLED: 'false' })).mailbox.imap).toBeNull();
   });
@@ -130,8 +147,17 @@ describe('loadConfig', () => {
 
   it("refuses retries that would outlast RabbitMQ's 30-minute consumer timeout", () => {
     expect(problemsOf(env({ PECMAILER_RETRY_BACKOFF_SECONDS: '600,600,600' }))).toEqual([
-      expect.stringContaining('add up to 1800 s'),
+      expect.stringContaining('add up to 2040 s'),
     ]);
+    // The attempts count too: 1200 s of waits fit with 60-second timeouts, not with 120-second ones.
+    expect(problemsOf(env({ PECMAILER_RETRY_BACKOFF_SECONDS: '300,300,300,300' }))).toEqual([]);
+    expect(
+      problemsOf(
+        env({ PECMAILER_RETRY_BACKOFF_SECONDS: '300,300,300,300', PECMAILER_SMTP_TIMEOUT_SECONDS: '120' }),
+      ),
+    ).toEqual([expect.stringContaining('(5 x 120 s) add up to 1800 s')]);
+    // The defaults fit exactly: 60 + 300 + 900 s of waits, four attempts of 60 s.
+    expect(problemsOf(env())).toEqual([]);
     expect(problemsOf(env({ PECMAILER_RETRY_BACKOFF_SECONDS: '60,abc' }))).toEqual([
       expect.stringContaining('PECMAILER_RETRY_BACKOFF_SECONDS'),
     ]);

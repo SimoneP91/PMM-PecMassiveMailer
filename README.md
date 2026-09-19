@@ -6,7 +6,7 @@ How to use it, in words and with PHP examples: [docs/en/messages.md](docs/en/mes
 
 ## Status
 
-Version 0.6.0: the move from an HTTP API with a database to queues is complete ([ADR 0006](docs/en/adr/0006-queues-no-database.md)). Sending, the Sent copy, the outcomes and the receipts work end to end, verified on a real Aruba mailbox. Versions up to 0.5.1 (HTTP API and MongoDB) stay in the git history.
+Version 0.6.1: the move from an HTTP API with a database to queues is complete ([ADR 0006](docs/en/adr/0006-queues-no-database.md)). Sending, the Sent copy, the outcomes and the receipts work end to end, verified on a real Aruba mailbox. Versions up to 0.5.1 (HTTP API and MongoDB) stay in the git history.
 
 Before production: a collaudo on a Legalmail mailbox (the production provider), and the RabbitMQ settings of [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) applied by whoever runs the broker.
 

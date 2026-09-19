@@ -6,7 +6,7 @@ Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messagg
 
 ## Stato
 
-Versione 0.6.0: il passaggio da un'API HTTP con database alle code è completo ([ADR 0006](docs/it/adr/0006-queues-no-database.md)). Invio, copia in Inviata, esiti e ricevute funzionano da un capo all'altro, verificati su una casella Aruba reale. Le versioni fino alla 0.5.1, con API HTTP e MongoDB, restano nella storia di git.
+Versione 0.6.1: il passaggio da un'API HTTP con database alle code è completo ([ADR 0006](docs/it/adr/0006-queues-no-database.md)). Invio, copia in Inviata, esiti e ricevute funzionano da un capo all'altro, verificati su una casella Aruba reale. Le versioni fino alla 0.5.1, con API HTTP e MongoDB, restano nella storia di git.
 
 Prima della produzione: un collaudo su una casella Legalmail, il gestore usato in produzione, e le impostazioni di RabbitMQ di [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) applicate da chi gestisce il server.
 

@@ -1,6 +1,6 @@
 {
   "name": "pecmailer",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "PEC (certified e-mail) sending service: one container per tenant and mailbox, driven by RabbitMQ queues",
   "private": true,
   "license": "UNLICENSED",

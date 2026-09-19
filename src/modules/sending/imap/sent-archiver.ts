@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 
 import type { ResolvedImap, ResolvedMailbox } from '../../../config/config';
+import { ImapAuthError, isImapAuthFailure } from './imap-auth-error';
 
 /**
  * Files a copy of a sent message in the mailbox's Sent folder, so the
@@ -8,13 +9,13 @@ import type { ResolvedImap, ResolvedMailbox } from '../../../config/config';
  * what the client's operators expect to find.
  *
  * A failure here never changes the fate of the message: it was sent. It is
- * recorded on the message (sentCopy = FAILED) and the next message tries a
- * fresh connection.
+ * reported in its sent event (sentCopy = FAILED) and the next message tries a
+ * fresh connection; a refused login throws ImapAuthError, which suspends the
+ * mailbox.
  */
 export interface SentArchiver {
   append(eml: Buffer, sentAt: Date): Promise<void>;
-  /** Connects, logs in and checks the Sent folder exists. */
-  /** true when the Sent folder exists; throws when the login fails. */
+  /** Connects and logs in: true when the Sent folder exists; throws when the login fails. */
   verify(): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -94,7 +95,11 @@ class ImapflowSentArchiver implements SentArchiver {
       // Reported by the operation in flight; the next append reconnects.
       this.client = undefined;
     });
-    await client.connect();
+    try {
+      await client.connect();
+    } catch (error: unknown) {
+      throw isImapAuthFailure(error) ? new ImapAuthError() : error;
+    }
     this.client = client;
 
     return client;

@@ -168,6 +168,21 @@ describe('PecSender: a PEC taken for the first time', () => {
     expect(smtp.sent).toEqual([]);
   });
 
+  it('suspends the mailbox when the login for the Sent copy is refused; the PEC left, and is reported sent', async () => {
+    const { sender, suspension, queues, archiver } = senderFixture();
+    archiver.refuseLogin = true;
+
+    expect(await sender.handle(fresh(sendRequest()))).toBe('done');
+
+    expect(suspension.cause).toBe('IMAP_AUTH_REFUSED');
+    expect(queues.stopped).toBe(1);
+    expect(queues.events().map((event) => event.event)).toEqual(['mailbox.suspended', 'sent']);
+    expect(queues.events('sent')[0]).toMatchObject({
+      sentCopy: 'FAILED',
+      sentCopyError: 'IMAP login refused',
+    });
+  });
+
   it('reports the PEC sent even when the copy in the Sent folder fails', async () => {
     const { sender, queues, archiver } = senderFixture();
     archiver.failFor = 'Sollecito pratica 4521';
@@ -279,10 +294,22 @@ describe('PecSender: a PEC delivered again after an interruption', () => {
   it('reports a message that breaks a rule as rejected: such a message is never sent', async () => {
     const { sender, queues, proof } = senderFixture();
 
-    await sender.handle(redelivered(sendRequest({ to: { address: 'mario@gmail.com' } })));
+    await sender.handle(redelivered(sendRequest({ html: '<p>ok</p><script>alert(1)</script>' })));
 
     expect(proof.searched).toEqual([]);
     expect(queues.events()[0]).toMatchObject({ event: 'rejected' });
+  });
+
+  it('does not judge the recipient again: a DNS answer that changed cannot turn a PEC that left into rejected', async () => {
+    const { sender, queues, proof } = senderFixture();
+    // Unclassifiable today (the stub's answer to any unknown domain), but the PEC had left.
+    proof.proofs.set(MESSAGE_ID, { type: 'ACCEPTANCE', issuedAt: undefined });
+
+    await sender.handle(redelivered(sendRequest({ to: { address: 'mario@studio-rossi.it' } })));
+
+    expect(queues.events()).toEqual([
+      expect.objectContaining({ event: 'sent', confirmedBy: 'ACCEPTANCE_RECEIPT' }),
+    ]);
   });
 
   it('reports it uncertain at once when IMAP is off and nothing can be looked for', async () => {

@@ -1,4 +1,5 @@
 import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config';
+import { ImapAuthError } from '../../src/modules/sending/imap/imap-auth-error';
 import type { SentArchiver, SentArchiverFactory } from '../../src/modules/sending/imap/sent-archiver';
 
 /** Records what the worker would file in the Sent folder; can be told to fail. */
@@ -7,12 +8,17 @@ export class FakeSentArchiverFactory implements SentArchiverFactory {
   /** The copy of a message whose EML contains this text fails once (scoped, so another message cannot use it up). */
   public failFor: string | undefined;
   public created = 0;
+  /** Every login is refused, as after a password change. */
+  public refuseLogin = false;
 
   public create(mailbox: ResolvedMailbox, _imap: ResolvedImap): SentArchiver {
     this.created += 1;
 
     return {
       append: (eml: Buffer, sentAt: Date): Promise<void> => {
+        if (this.refuseLogin) {
+          return Promise.reject(new ImapAuthError());
+        }
         if (this.failFor !== undefined && eml.includes(this.failFor)) {
           this.failFor = undefined;
 

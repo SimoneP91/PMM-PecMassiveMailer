@@ -3,7 +3,7 @@ import type { Clock } from '../../src/common/time/clock';
 import type { ResolvedMailbox } from '../../src/config/config';
 import type { RecipientVerification } from '../../src/modules/recipients/recipient-verifier';
 import type { ProofLookup, SentProof } from '../../src/modules/receipts/sent-proof';
-import { ReceiptSourceAuthError } from '../../src/modules/receipts/receipt-source';
+import { ImapAuthError } from '../../src/modules/sending/imap/imap-auth-error';
 import { MailboxSuspension } from '../../src/modules/sending/mailbox-suspension';
 import { EmlBuilder } from '../../src/modules/sending/mime/eml-builder';
 import { OutcomeEvents } from '../../src/modules/sending/outcome-events';
@@ -159,7 +159,7 @@ export class FakeProofLookup implements ProofLookup {
   public find(messageId: string): Promise<SentProof | undefined> {
     this.searched.push(messageId);
     if (this.refuseLogin) {
-      return Promise.reject(new ReceiptSourceAuthError('IMAP login refused'));
+      return Promise.reject(new ImapAuthError());
     }
 
     return Promise.resolve(this.proofs.get(messageId));

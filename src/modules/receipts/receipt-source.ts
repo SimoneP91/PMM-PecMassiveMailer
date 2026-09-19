@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 
 import type { ResolvedImap, ResolvedMailbox } from '../../config/config';
+import { ImapAuthError, isImapAuthFailure } from '../sending/imap/imap-auth-error';
 
 /** One mail of the folder, before its body is downloaded. */
 export interface SourceMail {
@@ -27,14 +28,6 @@ export interface ReadPosition {
    */
   readonly since: Date;
   readonly max: number;
-}
-
-/** The login was refused: the mailbox must be suspended, not retried. */
-export class ReceiptSourceAuthError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = 'ReceiptSourceAuthError';
-  }
 }
 
 /**
@@ -80,10 +73,7 @@ class ImapflowReceiptSource implements ReceiptSource {
     try {
       await client.connect();
     } catch (error: unknown) {
-      if ((error as { authenticationFailed?: unknown }).authenticationFailed === true) {
-        throw new ReceiptSourceAuthError('IMAP login refused');
-      }
-      throw error;
+      throw isImapAuthFailure(error) ? new ImapAuthError() : error;
     }
 
     try {
