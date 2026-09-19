@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
+Stage 3: sending worker.
+
+### Added
+
+- Worker loop per mailbox, guarded by a MongoDB lease (`mailbox_leases`): one sender per mailbox whatever the replica count; leases renewed, released on shutdown, taken over when expired.
+- Pacing per mailbox (`perMinute`, `perDay`) with counters in MongoDB (`mailbox_counters`) that survive restarts.
+- Message state machine: PENDING/RETRY_SCHEDULED → SENDING → SENT | RETRY_SCHEDULED | FAILED | STUCK; every transition atomic and state-conditioned; batch counters and `SENT` settlement (no pending, no stuck).
+- EML built with nodemailer's MailComposer, written under `batches/<tenant>/<batch>/eml/` and sent as raw bytes; deterministic `Message-ID` `<message id>@<sender domain>`; `X-PecMailer-*` headers.
+- SMTP outcome classification with a protocol observer (server `354` seen): login refused → mailbox SUSPENDED and message kept PENDING; 4xx → retry with backoff (`sending.retryBackoffSeconds`, `maxAttempts`); 5xx on envelope/data → FAILED; connection lost after the data was taken → STUCK.
+- Stale recovery job: SENDING longer than `sending.staleSendingSeconds` → STUCK.
+- Sent-folder copy over IMAP (imapflow) after each send, recorded as `sentCopy` on the message.
+- Worker health probes on `WORKER_HEALTH_PORT` (`/health/live`, `/health/ready`); docker-compose healthcheck for the worker.
+- Admin commands: `mailbox list|probe|activate|suspend`, `message stuck`, `message resolve <id> --as sent|requeue|failed`.
+- Config: optional `sending` section; env `WORKER_HEALTH_PORT`, `WORKER_ID`.
+- Tests: worker e2e against an in-process SMTP server (`smtp-server`) covering every outcome; unit tests for outcome classification, pacing and EML building (`mailparser`).
+
+### Changed
+
+- Code review of stages 1–2: placeholder position check is now a markup scanner (no false positive on `= {{x}}` in text); a stray `}}` is no longer an error; a batch already written never loses its idempotency record; the rest of a refused multipart upload is drained so the client receives the 4xx; attachment hashing through a Transform; `@types/nodemailer` removed (nodemailer 10 ships its types); `dist/tools` left out of the runtime image.
+
 ## [0.2.0] - 2026-09-19
 
 Stage 2: batch intake.

@@ -41,13 +41,21 @@ describe('checkHtmlPolicy', () => {
     ['<style>@import url(https://x/a.css);</style>', 'FORBIDDEN_CSS'],
     ['<style>p { behavior: url(x.htc) }</style>', 'FORBIDDEN_CSS'],
     ['<p title="{{{raw}}}">a</p>', 'RAW_PLACEHOLDER_IN_ATTRIBUTE'],
-    ['<{{tag}}>x</{{tag}}>', 'PLACEHOLDER_AS_TAG'],
-    ['<p title={{x}}>a</p>', 'UNQUOTED_ATTRIBUTE_PLACEHOLDER'],
-    ['<p title=a{{x}}>a</p>', 'UNQUOTED_ATTRIBUTE_PLACEHOLDER'],
+    ['<{{tag}}>x</{{tag}}>', 'PLACEHOLDER_IN_MARKUP'],
+    ['<p title={{x}}>a</p>', 'PLACEHOLDER_IN_MARKUP'],
+    ['<p title=a{{x}}>a</p>', 'PLACEHOLDER_IN_MARKUP'],
+    ['<p {{attr}}="1">a</p>', 'PLACEHOLDER_IN_MARKUP'],
     ['<style>p { color: {{c}} }</style>', 'PLACEHOLDER_IN_STYLE'],
     ['<!-- {{x}} --><p>a</p>', 'PLACEHOLDER_IN_COMMENT'],
   ])('rejects %s with %s', (html, code) => {
     expect(codes(html)).toContain(code);
+  });
+
+  it('accepts placeholders in text and in quoted attribute values', () => {
+    expect(codes('<p>Totale = {{amount}} &lt; {{max}}</p>')).toEqual([]);
+    expect(codes('<p>a < b {{x}}</p>')).toEqual([]);
+    expect(codes(`<a href="https://x/{{id}}" title='{{t}}'>x</a>`)).toEqual([]);
+    expect(codes('<style>p{color:red}</style><p>{{x}}</p>')).toEqual([]);
   });
 
   it('is case-insensitive on tags, attributes and schemes', () => {

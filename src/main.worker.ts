@@ -1,9 +1,12 @@
 import 'reflect-metadata';
 
 import { NestFactory } from '@nestjs/core';
+import { getConnectionToken } from '@nestjs/mongoose';
+import type { Connection } from 'mongoose';
 import { Logger } from 'nestjs-pino';
 
 import { WorkerModule } from './app/worker.module';
+import { startWorkerHealthServer } from './app/worker-health';
 import { WorkerRunner } from './app/worker-runner';
 import { ensureWritableDirectory } from './common/fs/ensure-dir';
 import { loadConfig } from './config/config.loader';
@@ -22,7 +25,20 @@ async function main(): Promise<void> {
   app.enableShutdownHooks();
   await app.init();
 
-  await app.get(WorkerRunner).waitUntilStopped();
+  const runner = app.get(WorkerRunner);
+  const health =
+    env.WORKER_HEALTH_PORT === 0
+      ? undefined
+      : await startWorkerHealthServer(
+          env.WORKER_HEALTH_PORT,
+          env.HTTP_HOST,
+          runner,
+          app.get<Connection>(getConnectionToken()),
+          () => new Date(),
+        );
+
+  await runner.waitUntilStopped();
+  health?.close();
 }
 
 main().catch((error: unknown) => {

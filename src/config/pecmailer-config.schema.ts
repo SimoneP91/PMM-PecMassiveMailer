@@ -119,11 +119,31 @@ export const recipientsConfigSchema = z.strictObject({
   nonPecMxSuffixes: z.array(domainName).default([]),
 });
 
+/**
+ * How the worker sends. Global: the provider-facing limits live on each
+ * mailbox, these are the mechanics of the loop.
+ */
+export const sendingConfigSchema = z.strictObject({
+  /** Attempts before a message with transient failures becomes FAILED. */
+  maxAttempts: z.number().int().min(1).max(20).default(5),
+  /** Delay before attempt 2, 3, ...; the last value repeats. */
+  retryBackoffSeconds: z.array(z.number().int().min(1)).min(1).default([60, 300, 900, 3600, 14400]),
+  /** A message SENDING for longer than this is STUCK: the worker died mid-send and nobody knows if it left. */
+  staleSendingSeconds: z.number().int().min(60).default(600),
+  /** How often a mailbox loop looks for work when the queue is empty. */
+  pollIntervalMs: z.number().int().min(100).default(5000),
+  /** How long a worker owns a mailbox before it must renew (renewed at a third of it). */
+  leaseTtlSeconds: z.number().int().min(10).default(60),
+  /** How often a suspended mailbox is re-checked for reactivation. */
+  suspendedRecheckSeconds: z.number().int().min(5).default(60),
+});
+
 export const pecmailerConfigSchema = z
   .strictObject({
     tenants: z.array(tenantConfigSchema).min(1),
     mailboxes: z.array(mailboxConfigSchema),
     recipients: recipientsConfigSchema.prefault({}),
+    sending: sendingConfigSchema.prefault({}),
   })
   .superRefine((config, ctx) => {
     const tenantIds = new Set<string>();
@@ -210,5 +230,6 @@ export type ApiKeyConfig = z.output<typeof apiKeyConfigSchema>;
 export type TenantLimits = z.output<typeof tenantLimitsSchema>;
 export type MailboxConfig = z.output<typeof mailboxConfigSchema>;
 export type RecipientsConfig = z.output<typeof recipientsConfigSchema>;
+export type SendingConfig = z.output<typeof sendingConfigSchema>;
 export type ProviderName = z.output<typeof providerNameSchema>;
 export type TransportSecurity = z.output<typeof transportSecuritySchema>;

@@ -1,15 +1,15 @@
-import { createHash } from 'node:crypto';
+import { createHash, type Hash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
+import { Transform, type Readable, type TransformCallback } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { Readable } from 'node:stream';
 
 import { Inject, Injectable } from '@nestjs/common';
 
+import type { BatchId, TenantId } from '../../common/types/branded';
 import { ENV } from '../../config/config.module';
 import type { Env } from '../../config/env.schema';
-import type { BatchId, TenantId } from '../../common/types/branded';
 
 export const HEAD_BYTES = 512;
 
@@ -28,6 +28,29 @@ export interface StagingArea {
 }
 
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** Sits in the pipeline between the request and the file: hashes, counts and keeps the first bytes of what is written. */
+class HashingTap extends Transform {
+  public size = 0;
+  private readonly hash: Hash = createHash('sha256');
+  private readonly headChunks: Buffer[] = [];
+  private headLength = 0;
+
+  public override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+    this.size += chunk.length;
+    this.hash.update(chunk);
+    if (this.headLength < HEAD_BYTES) {
+      const slice = chunk.subarray(0, HEAD_BYTES - this.headLength);
+      this.headChunks.push(slice);
+      this.headLength += slice.length;
+    }
+    callback(null, chunk);
+  }
+
+  public digest(): { sha256: string; head: Buffer } {
+    return { sha256: this.hash.digest('hex'), head: Buffer.concat(this.headChunks) };
+  }
+}
 
 /**
  * Files arrive with the request and are written to disk as they stream in:
@@ -54,10 +77,7 @@ export class AttachmentStore {
     return { id: requestId, dir };
   }
 
-  /**
-   * Streams a part to the staging area while hashing it, counting it and
-   * keeping its first bytes for type detection. Never buffers the file.
-   */
+  /** Streams a part to the staging area through a hashing tap. Never buffers the file. */
   public async stage(
     area: StagingArea,
     partName: string,
@@ -68,29 +88,11 @@ export class AttachmentStore {
       throw new Error(`part name "${partName}" rejected before reaching the store`);
     }
     const path = join(area.dir, partName);
-    const hash = createHash('sha256');
-    const headChunks: Buffer[] = [];
-    let headLength = 0;
-    let size = 0;
+    const tap = new HashingTap();
+    await pipeline(stream, tap, createWriteStream(path, { flags: 'wx' }));
+    const { sha256, head } = tap.digest();
 
-    stream.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-      hash.update(chunk);
-      if (headLength < HEAD_BYTES) {
-        const slice = chunk.subarray(0, HEAD_BYTES - headLength);
-        headChunks.push(slice);
-        headLength += slice.length;
-      }
-    });
-    await pipeline(stream, createWriteStream(path, { flags: 'wx' }));
-
-    return {
-      path,
-      size,
-      sha256: hash.digest('hex'),
-      head: Buffer.concat(headChunks),
-      truncated: isTruncated(),
-    };
+    return { path, size: tap.size, sha256, head, truncated: isTruncated() };
   }
 
   public async commit(area: StagingArea, tenantId: TenantId, batchId: BatchId): Promise<string> {
@@ -109,12 +111,21 @@ export class AttachmentStore {
     return this.safeJoin('batches', tenantId, batchId, 'parts');
   }
 
-  /** Relative to STORAGE_DIR, what is recorded in the database. */
+  /** Relative to STORAGE_DIR with "/" separators: what is recorded in the database. */
   public relative(absolute: string): string {
+    if (!absolute.startsWith(this.root + sep)) {
+      throw new Error('path is not under the storage root');
+    }
+
     return absolute
       .slice(this.root.length + 1)
       .split(sep)
       .join('/');
+  }
+
+  /** The inverse of relative(): an absolute path under the root, or an error. */
+  public absolute(relativePath: string): string {
+    return this.safeJoin(...relativePath.split('/'));
   }
 
   private safeJoin(...segments: string[]): string {

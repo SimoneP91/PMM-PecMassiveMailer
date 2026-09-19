@@ -12,3 +12,4 @@ docs
 config/pecmailer.yaml
 config/*.local.yaml
 *.md
+openapi.json

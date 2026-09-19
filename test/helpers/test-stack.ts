@@ -4,19 +4,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModule } from '@nestjs/testing';
 import { MongoClient } from 'mongodb';
 import { inject } from 'vitest';
 
 import { ApiModule } from '../../src/app/api.module';
 import { registerMultipart } from '../../src/app/multipart';
 import { setupSwagger } from '../../src/app/swagger';
+import { WorkerModule } from '../../src/app/worker.module';
+import { WorkerRunner } from '../../src/app/worker-runner';
 import { requestIdFrom } from '../../src/common/http/request-id';
 import { generateApiKey } from '../../src/common/security/hash';
 import { resolveConfig, type ResolvedConfig } from '../../src/config/config.loader';
-import { parseEnv } from '../../src/config/env.schema';
-import { pecmailerConfigSchema } from '../../src/config/pecmailer-config.schema';
-import { MX_RESOLVER, type MxRecord, type MxResolver } from '../../src/modules/recipients/recipient-verifier';
+import { parseEnv, type Env } from '../../src/config/env.schema';
+import { pecmailerConfigSchema, type SendingConfig } from '../../src/config/pecmailer-config.schema';
+import { MX_RESOLVER } from '../../src/modules/recipients/recipient-verifier';
+import { SENT_ARCHIVER_FACTORY } from '../../src/modules/sending/imap/sent-archiver';
+import { FakeSentArchiverFactory } from './fake-archiver';
+import { FakeMxResolver } from './fake-mx';
 
 /**
  * A complete API stack for HTTP tests: real Nest wiring, real Mongoose
@@ -24,39 +29,6 @@ import { MX_RESOLVER, type MxRecord, type MxResolver } from '../../src/modules/r
  * (transactions work; each stack gets its own database), a temporary
  * storage directory and a DNS resolver answered by the test.
  */
-export class FakeMxResolver implements MxResolver {
-  public readonly answers = new Map<string, readonly MxRecord[] | string>();
-  public readonly lookups: string[] = [];
-
-  public mx(domain: string, ...exchanges: string[]): this {
-    this.answers.set(
-      domain,
-      exchanges.map((exchange, i) => ({ exchange, priority: 10 * (i + 1) })),
-    );
-
-    return this;
-  }
-
-  public fail(domain: string, code: string): this {
-    this.answers.set(domain, code);
-
-    return this;
-  }
-
-  public resolveMx(domain: string): Promise<readonly MxRecord[]> {
-    this.lookups.push(domain);
-    const answer = this.answers.get(domain);
-    if (answer === undefined) {
-      return Promise.reject(Object.assign(new Error(`queryMx ENOTFOUND ${domain}`), { code: 'ENOTFOUND' }));
-    }
-    if (typeof answer === 'string') {
-      return Promise.reject(Object.assign(new Error(`queryMx ${answer} ${domain}`), { code: answer }));
-    }
-
-    return Promise.resolve(answer);
-  }
-}
-
 function withDatabase(uri: string, dbName: string): string {
   const url = new URL(uri);
   url.pathname = `/${dbName}`;
@@ -71,6 +43,7 @@ export interface TestTenant {
 
 export interface TestStack {
   readonly app: NestFastifyApplication;
+  readonly env: Env;
   readonly config: ResolvedConfig;
   readonly mx: FakeMxResolver;
   readonly storageDir: string;
@@ -85,6 +58,11 @@ export interface TestStackOptions {
   readonly maxMessagesPerBatch?: number;
   readonly maxRequestBytes?: number;
   readonly maxMessageBytes?: number;
+  readonly perMinute?: number;
+  /** Points every mailbox at this SMTP server (the in-process fake). */
+  readonly smtp?: { readonly host: string; readonly port: number };
+  readonly smtpTimeoutSeconds?: number;
+  readonly sending?: Partial<SendingConfig>;
 }
 
 export async function startTestStack(options: TestStackOptions = {}): Promise<TestStack> {
@@ -99,6 +77,14 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
     LOG_LEVEL: 'fatal',
     MONGODB_URI: mongoUri,
     STORAGE_DIR: storageDir,
+    WORKER_HEALTH_PORT: '0',
+    ...(options.smtp === undefined
+      ? {}
+      : {
+          PECMAILER_SMTP_OVERRIDE_HOST: options.smtp.host,
+          PECMAILER_SMTP_OVERRIDE_PORT: String(options.smtp.port),
+          PECMAILER_SMTP_OVERRIDE_SECURITY: 'none',
+        }),
   });
 
   const config = resolveConfig(
@@ -123,8 +109,14 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
           tenant: 't_serfin',
           provider: 'aruba',
           from: { address: 'solleciti@pec.serfin.example', name: 'Serfin' },
-          smtp: { username: 'solleciti@pec.serfin.example' },
-          limits: { maxMessageBytes: options.maxMessageBytes ?? 30 * 1024 * 1024 },
+          smtp: {
+            username: 'solleciti@pec.serfin.example',
+            timeoutSeconds: options.smtpTimeoutSeconds ?? 30,
+          },
+          limits: {
+            perMinute: options.perMinute ?? 60,
+            maxMessageBytes: options.maxMessageBytes ?? 30 * 1024 * 1024,
+          },
         },
         {
           code: 'iqera-legalmail',
@@ -135,6 +127,7 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
         },
       ],
       recipients: { pecDomains: ['pec.custom.example'] },
+      sending: options.sending ?? {},
     }),
     env,
     { MAILBOX_SERFIN_ARUBA_PASSWORD: 'pw', MAILBOX_IQERA_LEGALMAIL_PASSWORD: 'pw' },
@@ -159,6 +152,7 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
 
   return {
     app,
+    env,
     config,
     mx,
     storageDir,
@@ -173,4 +167,47 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
       await rm(storageDir, { recursive: true, force: true });
     },
   };
+}
+
+export interface TestWorker {
+  readonly module: TestingModule;
+  readonly runner: WorkerRunner;
+  readonly archiver: FakeSentArchiverFactory;
+  stop(): Promise<void>;
+}
+
+/** The worker process, in-process, against the same database and storage as the API stack. */
+export async function startTestWorker(stack: TestStack): Promise<TestWorker> {
+  const archiver = new FakeSentArchiverFactory();
+  const module = await Test.createTestingModule({ imports: [WorkerModule.forRoot(stack.env, stack.config)] })
+    .overrideProvider(SENT_ARCHIVER_FACTORY)
+    .useValue(archiver)
+    .compile();
+  await module.init();
+
+  return {
+    module,
+    runner: module.get(WorkerRunner),
+    archiver,
+    async stop(): Promise<void> {
+      await module.close();
+    },
+  };
+}
+
+/** Polls until the predicate holds or the timeout passes; returns the last value either way. */
+export async function waitFor<T>(
+  read: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  timeoutMs = 10_000,
+  intervalMs = 50,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let value = await read();
+  while (!predicate(value) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    value = await read();
+  }
+
+  return value;
 }

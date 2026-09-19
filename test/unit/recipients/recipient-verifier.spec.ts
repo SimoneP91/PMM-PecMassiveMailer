@@ -4,7 +4,7 @@ import type { Clock } from '../../../src/common/time/clock';
 import type { ResolvedConfig } from '../../../src/config/config.loader';
 import { RecipientVerifier } from '../../../src/modules/recipients/recipient-verifier';
 import { containing } from '../../helpers/matchers';
-import { FakeMxResolver } from '../../helpers/test-stack';
+import { FakeMxResolver } from '../../helpers/fake-mx';
 
 class FakeClock implements Clock {
   public constructor(public current = new Date('2026-09-19T10:00:00Z')) {}
@@ -26,6 +26,14 @@ const config: ResolvedConfig = {
     pecMxSuffixes: ['mx.provider.example'],
     nonPecDomains: [],
     nonPecMxSuffixes: [],
+  },
+  sending: {
+    maxAttempts: 5,
+    retryBackoffSeconds: [60],
+    staleSendingSeconds: 600,
+    pollIntervalMs: 5000,
+    leaseTtlSeconds: 60,
+    suspendedRecheckSeconds: 60,
   },
 };
 

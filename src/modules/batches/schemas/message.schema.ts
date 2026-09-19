@@ -23,6 +23,15 @@ export interface MessageInlineImage {
 
 export type SettlementState = 'PENDING' | 'SETTLED' | 'TIMED_OUT';
 
+/** Whether the copy the worker files in the mailbox's Sent folder made it there. */
+export type SentCopyState = 'PENDING' | 'ARCHIVED' | 'FAILED' | 'DISABLED';
+
+export interface MessageError {
+  readonly code: string;
+  readonly detail: string;
+  readonly at: Date;
+}
+
 /**
  * One row of a batch, with its subject and body ALREADY rendered: what is
  * stored is exactly what the worker will send, and what the client will be
@@ -49,7 +58,20 @@ export interface MessageDocument {
   readonly attempts: number;
   /** When the worker may pick it up; moved forward on retry. */
   readonly nextAttemptAt: Date;
-  readonly lastError?: { readonly code: string; readonly detail: string; readonly at: Date };
+  readonly lastError?: MessageError;
+  /** Set while SENDING: who took it and when; what the stale-recovery job looks at. */
+  readonly workerId?: string;
+  readonly sendingStartedAt?: Date;
+  readonly sentAt?: Date;
+  readonly failedAt?: Date;
+  readonly stuckAt?: Date;
+  /** RFC 5322 Message-ID as sent; the receipts of stage 5 refer to it. */
+  readonly messageIdHeader?: string;
+  readonly smtpResponse?: string;
+  /** The exact bytes that were sent, relative to STORAGE_DIR. */
+  readonly emlPath?: string;
+  readonly sentCopy: SentCopyState;
+  readonly sentCopyError?: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -98,6 +120,16 @@ export const messageSchema = new Schema<MessageDocument>(
     attempts: { type: Number, required: true },
     nextAttemptAt: { type: Date, required: true },
     lastError: { type: new Schema({ code: String, detail: String, at: Date }, { _id: false }) },
+    workerId: { type: String },
+    sendingStartedAt: { type: Date },
+    sentAt: { type: Date },
+    failedAt: { type: Date },
+    stuckAt: { type: Date },
+    messageIdHeader: { type: String },
+    smtpResponse: { type: String },
+    emlPath: { type: String },
+    sentCopy: { type: String, required: true },
+    sentCopyError: { type: String },
   },
   { collection: 'messages', timestamps: true, versionKey: false, minimize: false },
 );
@@ -111,6 +143,9 @@ messageSchema.index(
 );
 // Worker queue: the next PENDING message of a mailbox.
 messageSchema.index({ mailbox: 1, status: 1, nextAttemptAt: 1 });
+// Stale-recovery job and the stuck list.
+messageSchema.index({ status: 1, sendingStartedAt: 1 });
+messageSchema.index({ messageIdHeader: 1 }, { sparse: true });
 // Stage 4 filters.
 messageSchema.index({ tenantId: 1, to: 1, createdAt: -1 });
 messageSchema.index({ tenantId: 1, ref: 1, createdAt: -1 });

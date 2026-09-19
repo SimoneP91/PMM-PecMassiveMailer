@@ -8,14 +8,14 @@ A client submits a **batch**: one template, one mailbox, N recipients with their
 
 ## Status
 
-Stage 2 of 5: batches are accepted. A client submits a template, a mailbox and up to 2,500 recipients with their files in one multipart call; every row is validated, rendered and stored as a PENDING message. Sending arrives with stage 3.
+Stage 3 of 5: batches are accepted and **sent**. A client submits a template, a mailbox and up to 2,500 recipients with their files in one multipart call; every row is validated, rendered and queued; the worker sends each message once, at the mailbox's pace, archives the exact bytes, files a copy in the Sent folder and never guesses when the outcome is unknown (STUCK, for an operator). Read endpoints arrive with stage 4.
 
 | Stage | Scope                                                                                           | State |
 | ----- | ----------------------------------------------------------------------------------------------- | ----- |
 | 1     | tooling, Docker, configuration, health, Swagger, `GET /v1/mailboxes`                            | done  |
 | 2     | `POST /v1/batches`: multipart intake, template rules, PEC recipient check, attachments, dry run | done  |
-| 3     | sending worker: mailbox lease, pacing, SMTP, IMAP copy, EML archive, state machine              | next  |
-| 4     | read endpoints: batches, messages, search, cancel                                               |       |
+| 3     | sending worker: mailbox lease, pacing, SMTP, IMAP copy, EML archive, state machine              | done  |
+| 4     | read endpoints: batches, messages, search, cancel                                               | next  |
 | 5     | receipts, webhooks, settlement                                                                  |       |
 
 ## Stack
@@ -52,6 +52,17 @@ Then:
   Add `"options":{"dryRun":true}` to validate and preview without creating anything.
 
 - Greenmail (fake PEC provider) web UI: http://localhost:8080
+- worker probes: http://localhost:3001/health/live
+
+Operations (the same image, `node dist/main.cli.js`, or `npm run cli --` locally):
+
+```bash
+npm run cli -- mailbox list                 # state of every mailbox and which worker holds it
+npm run cli -- mailbox probe serfin-aruba   # SMTP + IMAP login with the configured credentials
+npm run cli -- mailbox activate serfin-aruba
+npm run cli -- message stuck                # messages whose outcome is unknown
+npm run cli -- message resolve m_... --as sent|requeue|failed
+```
 
 ## Development
 
@@ -79,7 +90,7 @@ src/
   config/       environment and config file schemas, loader
   common/       errors (RFC 9457), logging, security, ids, time
   database/     MongoDB connection
-  modules/      auth · tenants · mailboxes · batches · templates · recipients · attachments · health
+  modules/      auth · tenants · mailboxes · batches · templates · recipients · attachments · sending · health
   cli/          admin commands
 test/
   unit/ integration/ e2e/ security/

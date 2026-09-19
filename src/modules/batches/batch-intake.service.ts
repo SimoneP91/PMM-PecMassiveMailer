@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import { Inject, Injectable } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { PinoLogger } from 'nestjs-pino';
@@ -175,8 +177,12 @@ export class BatchIntakeService {
         rejected,
         warnings,
         lockedKey ?? '',
+        () => {
+          // The batch exists from here on: whatever fails next, the key must
+          // keep pointing at it, or a retry would create the batch twice.
+          lockedKey = undefined;
+        },
       );
-      lockedKey = undefined;
 
       return outcome;
     } catch (error: unknown) {
@@ -558,13 +564,13 @@ export class BatchIntakeService {
     rejected: readonly RejectedRow[],
     warnings: readonly BatchWarning[],
     idempotencyKey: string,
+    committed: () => void,
   ): Promise<IntakeOutcome> {
     const batchId: BatchId = newBatchId();
     const now = this.clock.now();
 
     const committedDir = await this.store.commit(staging, tenant.id, batchId);
-    const pathOf = (part: TypedPart): string =>
-      this.store.relative(`${committedDir}/${part.part}`.replace(/\//g, '/'));
+    const pathOf = (part: TypedPart): string => this.store.relative(join(committedDir, part.part));
 
     const storedParts: StoredPart[] = [...parts.values()].map((part) => ({
       part: part.part,
@@ -610,6 +616,7 @@ export class BatchIntakeService {
       settlement: 'PENDING',
       attempts: 0,
       nextAttemptAt: now,
+      sentCopy: mailbox.imap === null ? 'DISABLED' : 'PENDING',
     }));
 
     const batchDoc: Omit<BatchDocument, 'createdAt' | 'updatedAt'> = {
@@ -649,6 +656,7 @@ export class BatchIntakeService {
       }
       throw error;
     }
+    committed();
 
     const body: BatchAcceptedDto = {
       batchId,
@@ -668,7 +676,17 @@ export class BatchIntakeService {
       createdAt: now.toISOString(),
     };
     const location = `/v1/batches/${batchId}`;
-    await this.idempotency.complete(tenant.id, idempotencyKey, { status: 202, headers: { location }, body });
+    try {
+      await this.idempotency.complete(tenant.id, idempotencyKey, {
+        status: 202,
+        headers: { location },
+        body,
+      });
+    } catch (error: unknown) {
+      // The batch is safe; a retry with this key now gets IDEMPOTENCY_IN_PROGRESS
+      // until the lock expires, which is the honest answer.
+      this.logger.warn({ err: error, batchId, tenantId: tenant.id }, 'idempotency record not completed');
+    }
 
     this.logger.info(
       {

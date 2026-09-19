@@ -25,6 +25,10 @@ export const envSchema = z.object({
   CONFIG_FILE: z.string().min(1).default('./config/pecmailer.yaml'),
   STORAGE_DIR: z.string().min(1).default('./storage'),
 
+  // Worker only: liveness/readiness probes, and the name it signs leases with.
+  WORKER_HEALTH_PORT: z.coerce.number().int().min(0).max(65_535).default(3001),
+  WORKER_ID: z.string().min(1).max(100).optional(),
+
   // Local stack only: every mailbox talks to the same fake provider (Greenmail).
   // Left unset in production, where each mailbox uses its own preset.
   PECMAILER_SMTP_OVERRIDE_HOST: z.string().min(1).optional(),

@@ -21,7 +21,7 @@ export interface Placeholder {
 
 export interface PlaceholderParse {
   readonly placeholders: readonly Placeholder[];
-  /** Positions of "{{" or "}}" left over after every valid token was removed. */
+  /** Positions of "{{" left over after every valid token was removed. */
   readonly malformedAt: readonly number[];
 }
 
@@ -40,8 +40,10 @@ export function parsePlaceholders(template: string): PlaceholderParse {
     return ' ';
   });
 
+  // Only an opening "{{" left over is a mistake; a stray "}}" is ordinary
+  // text (minified CSS ends blocks with "}}").
   const malformedAt: number[] = [];
-  const leftover = /\{\{|\}\}/g;
+  const leftover = /\{\{/g;
   let match: RegExpExecArray | null;
   while ((match = leftover.exec(stripped)) !== null) {
     malformedAt.push(match.index);

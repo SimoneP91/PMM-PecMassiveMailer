@@ -44,6 +44,9 @@ export interface BatchDocument {
   readonly rejectedMessages: readonly RejectedMessage[];
   readonly warnings: readonly BatchWarning[];
   readonly idempotencyKey: string;
+  readonly sendingStartedAt?: Date;
+  /** Every message left the queue (sent or failed) and none is stuck. */
+  readonly sentAt?: Date;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -94,6 +97,8 @@ export const batchSchema = new Schema<BatchDocument>(
     },
     warnings: { type: [new Schema({ code: String, detail: String }, { _id: false })], required: true },
     idempotencyKey: { type: String, required: true },
+    sendingStartedAt: { type: Date },
+    sentAt: { type: Date },
   },
   { collection: 'batches', timestamps: true, versionKey: false, minimize: false },
 );

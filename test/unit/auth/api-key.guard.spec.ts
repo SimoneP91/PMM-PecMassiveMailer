@@ -34,6 +34,14 @@ const config: ResolvedConfig = {
   ],
   mailboxes: [],
   recipients: { pecDomains: [], pecMxSuffixes: [], nonPecDomains: [], nonPecMxSuffixes: [] },
+  sending: {
+    maxAttempts: 5,
+    retryBackoffSeconds: [60],
+    staleSendingSeconds: 600,
+    pollIntervalMs: 5000,
+    leaseTtlSeconds: 60,
+    suspendedRecheckSeconds: 60,
+  },
 };
 
 interface FakeRequest {

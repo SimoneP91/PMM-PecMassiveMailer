@@ -31,14 +31,15 @@ services:
   greenmail:
     image: greenmail/standalone:2.1.4
     environment:
-      # One user per mailbox declared in config/pecmailer.yaml, in Greenmail's
-      # login:password@domain form. The password must match
-      # MAILBOX_<CODE>_PASSWORD in .env; the login is the mailbox's smtp.username.
+      # auth.disabled: any login/password is accepted and the user is created on
+      # the fly, so every mailbox declared in config/pecmailer.yaml works here
+      # with the full address as username (as with the real providers) and
+      # whatever MAILBOX_<CODE>_PASSWORD says. Refused logins are covered by
+      # the automated tests, not by this stack.
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all
         -Dgreenmail.hostname=0.0.0.0
-        -Dgreenmail.auth.disabled=false
-        -Dgreenmail.users=solleciti:change-me@pec.serfin.example
+        -Dgreenmail.auth.disabled=true
         -Dgreenmail.verbose
     ports:
       - '3025:3025' # SMTP
@@ -81,16 +82,24 @@ services:
   worker:
     image: pecmailer:local
     command: ['node', 'dist/main.worker.js']
-    # The image's HEALTHCHECK probes the HTTP API, which the worker does not
-    # serve. A worker-specific liveness signal arrives with the sending module.
+    # The worker serves its own probes on WORKER_HEALTH_PORT (see src/app/worker-health.ts).
     healthcheck:
-      disable: true
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     env_file: .env
     environment:
       MONGODB_URI: mongodb://mongo:27017/pecmailer?directConnection=true
       CONFIG_FILE: /config/pecmailer.yaml
       STORAGE_DIR: /data/storage
       LOG_PRETTY: 'false'
+      WORKER_HEALTH_PORT: '3001'
       # Greenmail stands in for every provider on the local stack.
       PECMAILER_SMTP_OVERRIDE_HOST: greenmail
       PECMAILER_SMTP_OVERRIDE_PORT: '3025'
@@ -98,6 +107,8 @@ services:
       PECMAILER_IMAP_OVERRIDE_HOST: greenmail
       PECMAILER_IMAP_OVERRIDE_PORT: '3143'
       PECMAILER_IMAP_OVERRIDE_SECURITY: none
+    ports:
+      - '3001:3001' # worker health probes
     volumes:
       - ./config/pecmailer.yaml:/config/pecmailer.yaml:ro
       - storage:/data/storage

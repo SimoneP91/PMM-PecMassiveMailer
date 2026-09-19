@@ -19,7 +19,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
-RUN npm run build
+RUN npm run build && rm -rf dist/tools
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \

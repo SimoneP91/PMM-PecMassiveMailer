@@ -20,6 +20,7 @@ import {
   type PecmailerConfigFile,
   type ProviderName,
   type RecipientsConfig,
+  type SendingConfig,
   type TenantConfig,
   type TenantLimits,
   type TransportSecurity,
@@ -88,6 +89,7 @@ export interface ResolvedConfig {
   readonly tenants: readonly ResolvedTenant[];
   readonly mailboxes: readonly ResolvedMailbox[];
   readonly recipients: RecipientsConfig;
+  readonly sending: SendingConfig;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -197,6 +199,7 @@ export function resolveConfig(file: PecmailerConfigFile, env: Env, source: EnvSo
     tenants: file.tenants.map((tenant) => resolveTenant(tenant, source)),
     mailboxes: file.mailboxes.map((mailbox) => resolveMailbox(mailbox, env, source)),
     recipients: file.recipients,
+    sending: file.sending,
   });
 }
 

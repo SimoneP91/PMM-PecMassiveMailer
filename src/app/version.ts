@@ -4,4 +4,4 @@
  * the code should know about itself. A unit test pins it to package.json.
  */
 export const APP_NAME = 'pecmailer';
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';

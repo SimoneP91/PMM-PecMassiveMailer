@@ -158,23 +158,65 @@ export function checkHtmlPolicy(html: string, mode: HtmlPolicyMode, path: string
 
 /**
  * Escaping protects a value only where HTML escaping means something: in text
- * and in a QUOTED attribute value. A placeholder used as a tag name or as an
- * unquoted attribute value would let a value add attributes or elements.
+ * and in a QUOTED attribute value. A placeholder inside the markup of a tag -
+ * as its name, as an attribute name or as an unquoted attribute value - would
+ * let a value add attributes or elements, so it is refused.
+ *
+ * A small scanner rather than the DOM: the parser does not say whether an
+ * attribute value was quoted. It enters "tag" state only on a "<" that starts
+ * a tag the way browsers see it (letter, "/", "!" or "?"), so "a < b" in text
+ * stays text.
  */
 function checkPlaceholderPositions(html: string, path: string, errors: FieldError[]): void {
-  if (/<\/?\s*\{\{/.test(html)) {
-    errors.push({
-      path,
-      code: 'PLACEHOLDER_AS_TAG',
-      detail: 'a placeholder cannot be used as an element name',
-    });
-  }
-  if (/=\s*[^\s"'>]*\{\{/.test(html)) {
-    errors.push({
-      path,
-      code: 'UNQUOTED_ATTRIBUTE_PLACEHOLDER',
-      detail: 'an attribute value containing a placeholder must be quoted',
-    });
+  let state: 'text' | 'tag' | 'double' | 'single' | 'comment' = 'text';
+  let flagged = false;
+
+  for (let i = 0; i < html.length && !flagged; i += 1) {
+    const char = html[i] ?? '';
+    switch (state) {
+      case 'text':
+        if (char === '<') {
+          if (html.startsWith('<!--', i)) {
+            state = 'comment';
+            i += 3;
+          } else if (/[A-Za-z/!?]/.test(html[i + 1] ?? '')) {
+            state = 'tag';
+          }
+        }
+        break;
+      case 'comment':
+        if (html.startsWith('-->', i)) {
+          state = 'text';
+          i += 2;
+        }
+        break;
+      case 'tag':
+        if (char === '"') {
+          state = 'double';
+        } else if (char === "'") {
+          state = 'single';
+        } else if (char === '>') {
+          state = 'text';
+        } else if (char === '{' && html[i + 1] === '{') {
+          errors.push({
+            path,
+            code: 'PLACEHOLDER_IN_MARKUP',
+            detail: `offset ${String(i)}: a placeholder can only appear in text or inside a quoted attribute value`,
+          });
+          flagged = true;
+        }
+        break;
+      case 'double':
+        if (char === '"') {
+          state = 'tag';
+        }
+        break;
+      case 'single':
+        if (char === "'") {
+          state = 'tag';
+        }
+        break;
+    }
   }
 }
 

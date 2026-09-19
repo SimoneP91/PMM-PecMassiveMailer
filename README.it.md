@@ -8,14 +8,14 @@ Il cliente invia un **lotto**: un template, una casella, N destinatari ciascuno 
 
 ## Stato
 
-Fase 2 di 5: i lotti vengono accettati. Il cliente invia template, casella e fino a 2.500 destinatari con i loro file in una sola chiamata multipart; ogni riga è validata, resa e salvata come messaggio PENDING. La spedizione arriva con la fase 3.
+Fase 3 di 5: i lotti vengono accettati e **spediti**. Il cliente invia template, casella e fino a 2.500 destinatari con i loro file in una sola chiamata multipart; ogni riga è validata, resa e messa in coda; il worker spedisce ogni messaggio una volta sola, al ritmo della casella, archivia i byte esatti, ne mette una copia in Inviata e non indovina mai quando l'esito è ignoto (STUCK, per un operatore). Gli endpoint di lettura arrivano con la fase 4.
 
 | Fase | Contenuto                                                                                                            | Stato    |
 | ---- | -------------------------------------------------------------------------------------------------------------------- | -------- |
 | 1    | strumenti, Docker, configurazione, health, Swagger, `GET /v1/mailboxes`                                              | fatta    |
 | 2    | `POST /v1/batches`: ricezione multipart, regole dei template, verifica PEC del destinatario, allegati, prova a vuoto | fatta    |
-| 3    | worker di invio: lease della casella, pacing, SMTP, copia IMAP, archivio EML, macchina a stati                       | prossima |
-| 4    | endpoint di lettura: lotti, messaggi, ricerca, annullamento                                                          |          |
+| 3    | worker di invio: lease della casella, pacing, SMTP, copia IMAP, archivio EML, macchina a stati                       | fatta    |
+| 4    | endpoint di lettura: lotti, messaggi, ricerca, annullamento                                                          | prossima |
 | 5    | ricevute, webhook, chiusura del lotto                                                                                |          |
 
 ## Stack
@@ -52,6 +52,17 @@ Poi:
   Con `"options":{"dryRun":true}` valida e mostra l'anteprima senza creare nulla.
 
 - Greenmail (finto provider PEC), interfaccia web: http://localhost:8080
+- probe del worker: http://localhost:3001/health/live
+
+Operazioni (stessa immagine, `node dist/main.cli.js`, oppure `npm run cli --` in locale):
+
+```bash
+npm run cli -- mailbox list                 # stato di ogni casella e quale worker la detiene
+npm run cli -- mailbox probe serfin-aruba   # login SMTP + IMAP con le credenziali configurate
+npm run cli -- mailbox activate serfin-aruba
+npm run cli -- message stuck                # messaggi dall'esito ignoto
+npm run cli -- message resolve m_... --as sent|requeue|failed
+```
 
 ## Sviluppo
 
@@ -79,7 +90,7 @@ src/
   config/       schemi di ambiente e file di configurazione, loader
   common/       errori (RFC 9457), logging, sicurezza, id, tempo
   database/     connessione MongoDB
-  modules/      auth · tenants · mailboxes · batches · templates · recipients · attachments · health
+  modules/      auth · tenants · mailboxes · batches · templates · recipients · attachments · sending · health
   cli/          comandi di amministrazione
 test/
   unit/ integration/ e2e/ security/

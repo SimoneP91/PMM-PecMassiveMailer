@@ -29,8 +29,7 @@ services:
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all
         -Dgreenmail.hostname=0.0.0.0
-        -Dgreenmail.auth.disabled=false
-        -Dgreenmail.users=test:test@pec.example
+        -Dgreenmail.auth.disabled=true
     healthcheck:
       test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/3025 && exec 4<>/dev/tcp/127.0.0.1/3143']
       interval: 3s

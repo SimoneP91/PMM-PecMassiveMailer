@@ -7,6 +7,7 @@ import { ConfigModule } from '../config/config.module';
 import type { Env } from '../config/env.schema';
 import { DatabaseModule } from '../database/database.module';
 import { MailboxesModule } from '../modules/mailboxes/mailboxes.module';
+import { SendingModule } from '../modules/sending/sending.module';
 import { TenantsModule } from '../modules/tenants/tenants.module';
 import { WorkerRunner } from './worker-runner';
 
@@ -21,8 +22,10 @@ export class WorkerModule {
         DatabaseModule,
         TenantsModule,
         MailboxesModule,
+        SendingModule,
       ],
       providers: [WorkerRunner],
+      exports: [WorkerRunner],
     };
   }
 }
