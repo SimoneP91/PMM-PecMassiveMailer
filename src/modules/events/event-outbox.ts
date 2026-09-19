@@ -18,10 +18,6 @@ export interface NewEvent {
   readonly data: Record<string, unknown>;
 }
 
-function isDuplicateKeyError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
-}
-
 /**
  * Records events for later delivery. Pass the session of the transaction
  * that makes the fact true, so the event exists if and only if the fact does.
@@ -46,29 +42,23 @@ export class EventOutbox {
       occurredAt: event.occurredAt.toISOString(),
       data: event.data,
     };
-    try {
-      await this.events.create(
-        [
-          {
-            _id: eventId,
-            tenantId: event.tenantId,
-            type: event.type,
-            dedupKey: event.dedupKey,
-            occurredAt: event.occurredAt,
-            payload,
-            status: 'PENDING',
-            attempts: 0,
-            nextAttemptAt: event.occurredAt,
-            giveUpAt: new Date(event.occurredAt.getTime() + this.config.webhooks.retryForHours * 3_600_000),
-          },
-        ],
-        session === undefined ? {} : { session },
-      );
-    } catch (error: unknown) {
-      // Already recorded: the fact was reported once, which is the point.
-      if (!isDuplicateKeyError(error)) {
-        throw error;
-      }
-    }
+    // An upsert on the dedup key: recording the same fact again is a no-op rather
+    // than a duplicate-key error, which inside a transaction would abort it.
+    await this.events.updateOne(
+      { tenantId: event.tenantId, dedupKey: event.dedupKey },
+      {
+        $setOnInsert: {
+          _id: eventId,
+          type: event.type,
+          occurredAt: event.occurredAt,
+          payload,
+          status: 'PENDING',
+          attempts: 0,
+          nextAttemptAt: event.occurredAt,
+          giveUpAt: new Date(event.occurredAt.getTime() + this.config.webhooks.retryForHours * 3_600_000),
+        },
+      },
+      { upsert: true, ...(session === undefined ? {} : { session }) },
+    );
   }
 }

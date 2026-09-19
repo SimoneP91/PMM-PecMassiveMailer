@@ -29,6 +29,10 @@ Una PEC ha valore legale grazie alle sue ricevute: il gestore del mittente emett
 | `mailbox.suspended` registrato solo quando lo stato cambia (login IMAP o SMTP rifiutato, oppure operatore)                                                                                                                                                                            | Un login rifiutato ogni minuto non deve sommergere il cliente con lo stesso evento.                                                                                                                                                                          |
 | Liveness: un ciclo che dorme di proposito conta come vivo fino al risveglio previsto                                                                                                                                                                                                  | Emerso nei test: con un polling delle ricevute di 60 secondi la sonda vedeva il ciclo fermo; con un polling di 5 minuti o più il container sarebbe stato riavviato all'infinito.                                                                             |
 
+## Revisione (stesso giorno)
+
+Una seconda lettura delle fasi 4 e 5 ha trovato tredici problemi, corretti prima del rilascio; l'elenco è in `documentation.md` ("Review of stages 4 and 5"). Quelli che cambiano una decisione qui sopra: il lettore tratta una mail alla volta e scarica il corpo solo se le intestazioni ammettono una ricevuta; la prima lettura parte dalla finestra di chiusura; la sospensione decisa da un operatore non ferma più la lettura; una ricevuta può spostare anche un messaggio PENDING (rimesso in coda da un operatore); i segreti dei webhook devono avere almeno 32 caratteri; un IPv4 dentro un IPv6 (mapped, NAT64) è giudicato come IPv4.
+
 ## Conseguenze
 
 - Rilasciare la 0.5.0: costruire l'immagine, eseguire `db sync-indexes` (nuove collezioni `receipts`, `imap_cursors`, `webhook_events`, nuovi indici sui messaggi), aggiornare. Nuove sezioni di configurazione opzionali `receipts` e `webhooks`.

@@ -9,8 +9,16 @@ import type { MailboxLeaseService } from '../sending/mailbox-lease.service';
 import { LoopPulse } from '../sending/loop-pulse';
 import type { Sleeper } from '../sending/sleeper';
 import type { ImapCursorStore } from './imap-cursor.store';
+import { mayBeReceipt } from './receipt-parser';
 import type { ProcessOutcome, ReceiptProcessor } from './receipt-processor';
-import { ReceiptSourceAuthError, type ReceiptSourceFactory } from './receipt-source';
+import { ReceiptSourceAuthError, type ReceiptSourceFactory, type SourceMail } from './receipt-source';
+
+export type ReadOutcome = ProcessOutcome | 'skipped';
+
+const MAX_FAILURES = 3;
+
+/** Ends a pass early, already logged: the mail in hand is retried on the next pass. */
+class PassInterrupted extends Error {}
 
 export interface ReceiptReaderDeps {
   readonly processor: ReceiptProcessor;
@@ -33,6 +41,8 @@ export interface ReceiptReaderDeps {
  */
 export class ReceiptReader {
   private readonly pulse: LoopPulse;
+  /** Consecutive failures per UID of the folder being read. */
+  private readonly failures = new Map<number, number>();
 
   public constructor(
     private readonly mailbox: ResolvedMailbox,
@@ -82,42 +92,92 @@ export class ReceiptReader {
   }
 
   /** One pass over the new mails. Public for tests and for a manual read. */
-  public async readOnce(heartbeat?: LeaseHeartbeat): Promise<Record<ProcessOutcome, number>> {
-    const { processor, cursors, sources, states, clock, logger, receipts } = this.deps;
-    const counts: Record<ProcessOutcome, number> = { stored: 0, duplicate: 0, unmatched: 0, ignored: 0 };
+  public async readOnce(heartbeat?: LeaseHeartbeat): Promise<Record<ReadOutcome, number>> {
+    const { cursors, sources, states, clock, logger, receipts } = this.deps;
+    const counts: Record<ReadOutcome, number> = {
+      stored: 0,
+      duplicate: 0,
+      unmatched: 0,
+      ignored: 0,
+      skipped: 0,
+    };
 
-    if ((await states.get(this.mailbox.code)).status === 'SUSPENDED') {
+    const state = await states.get(this.mailbox.code);
+    if (state.status === 'SUSPENDED' && state.cause !== 'OPERATOR') {
+      // A refused login: one more attempt could get the account locked by the provider.
+      // An operator's pause stops sending only; reading is harmless and keeps outcomes coming.
       return counts;
     }
     const cursorKey = `${this.mailbox.code}:${this.imap.receiptsFolder}`;
     const cursor = await cursors.get(cursorKey);
-    const source = sources.create(this.mailbox, this.imap);
+    // Without a usable cursor, look back over the settlement window (plus a day), not the whole folder.
+    const since = new Date(clock.now().getTime() - (receipts.settleAfterHours + 24) * 3_600_000);
+
     try {
-      const batch = await source.fetchAfter(cursor.lastUid, receipts.maxPerPoll, cursor.uidValidity);
-      for (const mail of batch.mails) {
-        if (heartbeat?.isLost() === true) {
-          break;
-        }
-        this.pulse.beat();
-        counts[await processor.process(this.mailbox, mail.raw, mail.internalDate)] += 1;
-        await cursors.advance(cursorKey, batch.uidValidity, mail.uid, clock.now());
-      }
+      await sources
+        .create(this.mailbox, this.imap)
+        .read(
+          { afterUid: cursor.lastUid, uidValidity: cursor.uidValidity, since, max: receipts.maxPerPoll },
+          async (mail, uidValidity) => {
+            if (heartbeat?.isLost() === true) {
+              return false;
+            }
+            this.pulse.beat();
+            counts[await this.handle(mail)] += 1;
+            await cursors.advance(cursorKey, uidValidity, mail.uid, clock.now());
+
+            return true;
+          },
+        );
     } catch (error: unknown) {
       if (error instanceof ReceiptSourceAuthError) {
         logger.error({ mailbox: this.mailbox.code }, 'IMAP login refused: suspending the mailbox');
         await states.suspend(this.mailbox.code, 'IMAP_AUTH_REFUSED', error.message, clock.now());
-
-        return counts;
+      } else if (!(error instanceof PassInterrupted)) {
+        logger.warn({ err: error, mailbox: this.mailbox.code }, 'receipts folder could not be read');
       }
-      logger.warn({ err: error, mailbox: this.mailbox.code }, 'receipts folder could not be read');
-    } finally {
-      await source.close();
     }
 
-    if (counts.stored + counts.duplicate + counts.unmatched + counts.ignored > 0) {
+    if (Object.values(counts).some((count) => count > 0)) {
       logger.info({ mailbox: this.mailbox.code, ...counts }, 'receipts folder read');
     }
 
     return counts;
+  }
+
+  /**
+   * One mail: a quick look at its top-level headers, the body only for what
+   * may be a receipt. A mail that fails MAX_FAILURES passes in a row is
+   * skipped with an error in the log, so it cannot hold back every receipt
+   * that arrived after it.
+   */
+  private async handle(mail: SourceMail): Promise<ReadOutcome> {
+    if (!mayBeReceipt(mail.headers)) {
+      return 'ignored';
+    }
+    const { processor, logger } = this.deps;
+    try {
+      const outcome = await processor.process(this.mailbox, await mail.body(), mail.internalDate);
+      this.failures.delete(mail.uid);
+
+      return outcome;
+    } catch (error: unknown) {
+      const failures = (this.failures.get(mail.uid) ?? 0) + 1;
+      if (failures < MAX_FAILURES) {
+        this.failures.set(mail.uid, failures);
+        logger.warn(
+          { err: error, mailbox: this.mailbox.code, uid: mail.uid, failures },
+          'mail could not be processed; retried on the next pass',
+        );
+        throw new PassInterrupted();
+      }
+      this.failures.delete(mail.uid);
+      logger.error(
+        { err: error, mailbox: this.mailbox.code, uid: mail.uid, failures },
+        'mail skipped after repeated failures: if it is a receipt, its outcome is not recorded',
+      );
+
+      return 'skipped';
+    }
   }
 }

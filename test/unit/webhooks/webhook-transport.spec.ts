@@ -54,6 +54,8 @@ let server: Server;
 let port = 0;
 const received: { headers: Record<string, unknown>; body: string }[] = [];
 let answer = 200;
+/** 'drip': headers at once, then the body a byte at a time, forever; 'silent': never answers. */
+let mode: 'normal' | 'drip' | 'silent' = 'normal';
 
 beforeAll(async () => {
   if (certificate === undefined) {
@@ -64,7 +66,18 @@ beforeAll(async () => {
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       received.push({ headers: req.headers, body: Buffer.concat(chunks).toString('utf8') });
+      if (mode === 'silent') {
+        return;
+      }
       res.writeHead(answer, answer === 302 ? { location: 'https://169.254.169.254/' } : {});
+      if (mode === 'drip') {
+        const timer = setInterval(() => res.write('.'), 200);
+        res.on('close', () => {
+          clearInterval(timer);
+        });
+
+        return;
+      }
       res.end('ignored body');
     });
   });
@@ -129,6 +142,53 @@ describe.skipIf(certificate === undefined)('HttpsWebhookTransport', () => {
     });
 
     expect(response.status).toBe(302);
+  });
+
+  it('answers with the status as soon as it arrives, whatever the body does', async () => {
+    answer = 202;
+    mode = 'drip';
+    const started = Date.now();
+    const response = await transport().post({
+      url: `https://127.0.0.1:${String(port)}/hook`,
+      headers: {},
+      body: '{}',
+      timeoutMs: 2000,
+      allowPrivateNetwork: true,
+    });
+    mode = 'normal';
+
+    expect(response.status).toBe(202);
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it('gives up at the deadline when the endpoint never answers', async () => {
+    mode = 'silent';
+    const started = Date.now();
+    await expect(
+      transport().post({
+        url: `https://127.0.0.1:${String(port)}/hook`,
+        headers: {},
+        body: '{}',
+        timeoutMs: 500,
+        allowPrivateNetwork: true,
+      }),
+    ).rejects.toThrow(/no answer within 500 ms/);
+    mode = 'normal';
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('refuses an IPv4-mapped literal, however the URL spells it', async () => {
+    const before = received.length;
+    await expect(
+      transport().post({
+        url: `https://[::ffff:127.0.0.1]:${String(port)}/hook`,
+        headers: {},
+        body: '{}',
+        timeoutMs: 1000,
+        allowPrivateNetwork: false,
+      }),
+    ).rejects.toThrow(/private or reserved/);
+    expect(received.length).toBe(before);
   });
 
   it('refuses plain http and an untrusted certificate', async () => {

@@ -3,9 +3,10 @@ import { randomBytes } from 'node:crypto';
 import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config.loader';
 import {
   ReceiptSourceAuthError,
-  type FetchedBatch,
+  type ReadPosition,
   type ReceiptSource,
   type ReceiptSourceFactory,
+  type SourceMail,
 } from '../../src/modules/receipts/receipt-source';
 
 export type RicevutaKind =
@@ -168,33 +169,63 @@ export function buildEnvelope(
 
 /** The mailbox's receipts folder, in memory: mails get increasing UIDs per mailbox. */
 export class FakeReceiptSourceFactory implements ReceiptSourceFactory {
-  public readonly folders = new Map<string, { uid: number; raw: Buffer }[]>();
+  public readonly folders = new Map<string, { uid: number; raw: Buffer; internalDate: Date }[]>();
   public uidValidity = '1';
   public refuseLogin = false;
+  /** Passes over the folder. */
   public fetches = 0;
+  /** Whole mails downloaded: only what may be a receipt should be. */
+  public bodies = 0;
+  /** UIDs whose download always fails, like a mail the server cannot serve. */
+  public readonly broken = new Set<number>();
 
-  public deliver(mailbox: string, raw: Buffer): void {
+  /** Drops a mail in the folder; returns its UID. */
+  public deliver(mailbox: string, raw: Buffer, internalDate = new Date()): number {
     const folder = this.folders.get(mailbox) ?? [];
-    folder.push({ uid: (folder.at(-1)?.uid ?? 0) + 1, raw });
+    const uid = (folder.at(-1)?.uid ?? 0) + 1;
+    folder.push({ uid, raw, internalDate });
     this.folders.set(mailbox, folder);
+
+    return uid;
   }
 
   public create(mailbox: ResolvedMailbox, _imap: ResolvedImap): ReceiptSource {
     return {
-      fetchAfter: (afterUid: number, max: number, known: string | undefined): Promise<FetchedBatch> => {
+      read: async (
+        position: ReadPosition,
+        handle: (mail: SourceMail, uidValidity: string) => Promise<boolean>,
+      ): Promise<void> => {
         this.fetches += 1;
         if (this.refuseLogin) {
-          return Promise.reject(new ReceiptSourceAuthError('IMAP login refused'));
+          throw new ReceiptSourceAuthError('IMAP login refused');
         }
-        const from = known === this.uidValidity ? afterUid : 0;
+        const resume = position.uidValidity === this.uidValidity;
         const mails = (this.folders.get(mailbox.code) ?? [])
-          .filter((mail) => mail.uid > from)
-          .slice(0, max)
-          .map((mail) => ({ uid: mail.uid, raw: mail.raw, internalDate: undefined }));
+          .filter((mail) => (resume ? mail.uid > position.afterUid : mail.internalDate >= position.since))
+          .slice(0, position.max);
+        for (const mail of mails) {
+          const headerEnd = mail.raw.indexOf('\r\n\r\n');
+          const next = await handle(
+            {
+              uid: mail.uid,
+              internalDate: mail.internalDate,
+              headers: mail.raw.subarray(0, headerEnd < 0 ? mail.raw.length : headerEnd).toString('utf8'),
+              body: () => {
+                this.bodies += 1;
+                if (this.broken.has(mail.uid)) {
+                  return Promise.reject(new Error(`mail ${String(mail.uid)} cannot be served`));
+                }
 
-        return Promise.resolve({ uidValidity: this.uidValidity, mails });
+                return Promise.resolve(mail.raw);
+              },
+            },
+            this.uidValidity,
+          );
+          if (!next) {
+            break;
+          }
+        }
       },
-      close: (): Promise<void> => Promise.resolve(),
     };
   }
 }

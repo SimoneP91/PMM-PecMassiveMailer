@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Secret } from '../../src/common/security/secret';
 import { asMailboxCode, asTenantId } from '../../src/common/types/branded';
 import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config.loader';
-import { ImapflowReceiptSourceFactory } from '../../src/modules/receipts/receipt-source';
-import { buildReceipt } from '../helpers/receipts';
+import { mayBeReceipt } from '../../src/modules/receipts/receipt-parser';
+import { ImapflowReceiptSourceFactory, type ReadPosition } from '../../src/modules/receipts/receipt-source';
+import { buildEnvelope, buildReceipt } from '../helpers/receipts';
 
 /**
  * The real IMAP reader against Greenmail (docker-compose.test.yml, IMAP on
@@ -16,6 +17,7 @@ import { buildReceipt } from '../helpers/receipts';
  */
 const HOST = process.env['GREENMAIL_HOST'] ?? '127.0.0.1';
 const PORT = Number(process.env['GREENMAIL_IMAP_PORT'] ?? '13143');
+const DAY = 24 * 3_600_000;
 
 const clients: ImapFlow[] = [];
 
@@ -55,11 +57,42 @@ function receipt(n: number): Buffer {
   return buildReceipt({ kind: 'accettazione', ref: `<m_it${String(n)}@pec.serfin.example>` });
 }
 
-const source = (imap: ResolvedImap): ReturnType<ImapflowReceiptSourceFactory['create']> =>
-  new ImapflowReceiptSourceFactory().create(
+interface Read {
+  readonly uidValidity: string | undefined;
+  readonly mails: { uid: number; headers: string; raw: Buffer | undefined; internalDate: Date | undefined }[];
+}
+
+/** Reads like the worker does: the body only when the headers say it may be a receipt. */
+async function read(imap: ResolvedImap, position: Partial<ReadPosition> = {}): Promise<Read> {
+  const source = new ImapflowReceiptSourceFactory().create(
     { code: asMailboxCode('it'), tenantId: asTenantId('t_it') } as ResolvedMailbox,
     imap,
   );
+  let uidValidity: string | undefined;
+  const mails: Read['mails'] = [];
+  await source.read(
+    {
+      afterUid: 0,
+      uidValidity: undefined,
+      since: new Date(Date.now() - DAY),
+      max: 10,
+      ...position,
+    },
+    async (mail, validity) => {
+      uidValidity = validity;
+      mails.push({
+        uid: mail.uid,
+        headers: mail.headers,
+        internalDate: mail.internalDate,
+        raw: mayBeReceipt(mail.headers) ? await mail.body() : undefined,
+      });
+
+      return true;
+    },
+  );
+
+  return { uidValidity, mails };
+}
 
 afterEach(async () => {
   for (const client of clients.splice(0)) {
@@ -76,29 +109,51 @@ describe('ImapflowReceiptSource against Greenmail', () => {
       await drop.append('INBOX', raw);
     }
 
-    const first = await source(imapFor(user)).fetchAfter(0, 2, undefined);
+    const first = await read(imapFor(user), { max: 2 });
     expect(first.mails).toHaveLength(2);
-    expect(first.mails[0]?.raw.equals(raws[0]!)).toBe(true);
-    expect(first.mails[1]?.raw.equals(raws[1]!)).toBe(true);
+    expect(first.mails[0]?.raw?.equals(raws[0]!)).toBe(true);
+    expect(first.mails[1]?.raw?.equals(raws[1]!)).toBe(true);
     expect(first.mails[0]?.internalDate).toBeInstanceOf(Date);
 
-    const lastUid = first.mails[1]?.uid ?? 0;
-    const second = await source(imapFor(user)).fetchAfter(lastUid, 10, first.uidValidity);
-    expect(second.mails.map((mail) => mail.raw.equals(raws[2]!))).toEqual([true]);
+    const position = { afterUid: first.mails[1]?.uid ?? 0, uidValidity: first.uidValidity };
+    const second = await read(imapFor(user), position);
+    expect(second.mails.map((mail) => mail.raw?.equals(raws[2]!))).toEqual([true]);
 
     // Past the end: "N:*" would match the last mail again, the reader must not.
-    const third = await source(imapFor(user)).fetchAfter(second.mails[0]?.uid ?? 0, 10, first.uidValidity);
+    const third = await read(imapFor(user), { ...position, afterUid: second.mails[0]?.uid ?? 0 });
     expect(third.mails).toEqual([]);
   });
 
-  it('starts over when the folder was recreated (another UIDVALIDITY)', async () => {
+  it('returns only the two header lines that tell a receipt apart, and fetches nothing else', async () => {
     const user = newUser();
     const drop = await provider(user);
-    await drop.append('INBOX', receipt(1));
+    await drop.append('INBOX', buildEnvelope(receipt(1)));
+    await drop.append('INBOX', receipt(2));
 
-    const read = await source(imapFor(user)).fetchAfter(999, 10, 'a-uidvalidity-from-another-folder');
+    const { mails } = await read(imapFor(user));
 
-    expect(read.mails).toHaveLength(1);
+    expect(mails.map((mail) => mayBeReceipt(mail.headers))).toEqual([false, true]);
+    expect(mails[0]?.headers).toMatch(/^X-Trasporto:/im);
+    expect(mails[0]?.headers).not.toMatch(/^Subject:/im);
+    expect(mails[0]?.raw).toBeUndefined();
+  });
+
+  it('without a usable cursor, starts from the mails received since the given day', async () => {
+    const user = newUser();
+    const drop = await provider(user);
+    await drop.append('INBOX', receipt(1), [], new Date(Date.now() - 10 * DAY));
+    await drop.append('INBOX', receipt(2));
+
+    const fresh = await read(imapFor(user));
+    expect(fresh.mails.map((mail) => mail.raw?.toString('utf8').includes('m_it2@'))).toEqual([true]);
+
+    // Another UIDVALIDITY (the folder was recreated): the same rule applies.
+    const recreated = await read(imapFor(user), { afterUid: 999, uidValidity: 'another-folder' });
+    expect(recreated.mails).toHaveLength(1);
+
+    // With a cursor, the date plays no part.
+    const resumed = await read(imapFor(user), { afterUid: 0, uidValidity: fresh.uidValidity });
+    expect(resumed.mails).toHaveLength(2);
   });
 
   it('leaves the mailbox untouched: nothing marked as read, nothing moved', async () => {
@@ -106,7 +161,7 @@ describe('ImapflowReceiptSource against Greenmail', () => {
     const drop = await provider(user);
     await drop.append('INBOX', receipt(1));
 
-    await source(imapFor(user)).fetchAfter(0, 10, undefined);
+    await read(imapFor(user));
 
     const lock = await drop.getMailboxLock('INBOX');
     try {
@@ -126,9 +181,9 @@ describe('ImapflowReceiptSource against Greenmail', () => {
     await drop.append('Ricevute', receipt(1));
     await drop.append('INBOX', receipt(2));
 
-    const read = await source(imapFor(user, 'Ricevute')).fetchAfter(0, 10, undefined);
+    const { mails } = await read(imapFor(user, 'Ricevute'));
 
-    expect(read.mails).toHaveLength(1);
-    expect(read.mails[0]?.raw.toString('utf8')).toContain('m_it1@');
+    expect(mails).toHaveLength(1);
+    expect(mails[0]?.raw?.toString('utf8')).toContain('m_it1@');
   });
 });

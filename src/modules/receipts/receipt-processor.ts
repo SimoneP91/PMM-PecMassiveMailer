@@ -30,12 +30,14 @@ function sha256(content: Buffer): string {
 /**
  * Statuses a receipt may move a message out of. A receipt is proof from the
  * provider, so it also wins over what the worker could not know: a STUCK
- * message, or one whose earlier attempt was in fact accepted (RETRY_SCHEDULED,
- * FAILED), is moved to what the receipt says - and a retry that would have
- * sent it twice never happens. A message being sent right now, or cancelled,
- * is left alone.
+ * message, one an operator requeued (PENDING again), or one whose earlier
+ * attempt was in fact accepted (RETRY_SCHEDULED, FAILED), is moved to what
+ * the receipt says - and the send that would have duplicated it never
+ * happens. A PENDING message can only match a receipt after an attempt: its
+ * Message-ID exists from the first attempt on. A message being sent right
+ * now, or cancelled, is left alone.
  */
-const MOVABLE: readonly MessageStatus[] = ['SENT', 'STUCK', 'RETRY_SCHEDULED', 'FAILED'];
+const MOVABLE: readonly MessageStatus[] = ['PENDING', 'SENT', 'STUCK', 'RETRY_SCHEDULED', 'FAILED'];
 
 type Effect = 'accepted' | 'delivered' | 'notDelivered' | 'none';
 
@@ -89,7 +91,12 @@ export class ReceiptProcessor {
     }
 
     const dedupKey = parsed.sourceMessageId ?? `sha256:${sha256(raw)}`;
-    if ((await this.receipts.exists({ mailbox: mailbox.code, dedupKey }).lean()) !== null) {
+    const known = await this.receipts.findOne({ mailbox: mailbox.code, dedupKey }, { issuedAt: 1 }).lean();
+    if (known !== null) {
+      // Stored already. Apply it again anyway: a crash between storing a receipt and
+      // moving its message must not leave the message behind. Applying is idempotent.
+      await this.apply(message, parsed, known.issuedAt);
+
       return 'duplicate';
     }
 
@@ -97,6 +104,8 @@ export class ReceiptProcessor {
     const issuedAt = parsed.issuedAt ?? internalDate ?? now;
     const receipt = await this.save(message, mailbox, parsed, raw, dedupKey, issuedAt, now);
     if (receipt === null) {
+      await this.apply(message, parsed, issuedAt);
+
       return 'duplicate';
     }
 
@@ -185,7 +194,7 @@ export class ReceiptProcessor {
         const moved = await this.messages.updateOne(from, {
           $set: { status: 'ACCEPTED', acceptedAt: at, settlement: 'PENDING' },
           $min: { sentAt: at },
-          $unset: { settledAt: 1, failedAt: 1, stuckAt: 1, nextAttemptAt: 1 },
+          $unset: { settledAt: 1, failedAt: 1, stuckAt: 1 },
         });
         if (moved.modifiedCount === 0) {
           // Already further along (a delivery read first): only complete the timeline.
@@ -227,7 +236,7 @@ export class ReceiptProcessor {
         break;
     }
 
-    if (message.status === 'STUCK' || message.status === 'RETRY_SCHEDULED' || message.status === 'FAILED') {
+    if (message.status !== 'SENT' && MOVABLE.includes(message.status)) {
       this.logger.warn(
         { messageId: message._id, was: message.status, receipt: parsed.type },
         'receipt proves the message left: status taken from the receipt',

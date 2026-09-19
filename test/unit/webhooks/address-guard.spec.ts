@@ -21,17 +21,30 @@ describe('isForbiddenAddress', () => {
     'fe80::1',
     '::ffff:10.0.0.1',
     '::ffff:127.0.0.1',
+    '::ffff:a00:1', // what a URL parser makes of [::ffff:10.0.0.1]
+    '::ffff:7f00:1',
+    '0:0:0:0:0:ffff:169.254.169.254',
+    '::a00:1', // IPv4-compatible, deprecated
+    '64:ff9b::a00:1', // NAT64 towards 10.0.0.1
+    '64:ff9b::169.254.169.254',
+    '64:ff9b:1::1', // local-use NAT64
     'not-an-ip',
   ])('refuses %s', (address) => {
     expect(isForbiddenAddress(address)).toBe(true);
   });
 
-  it.each(['8.8.8.8', '1.1.1.1', '172.32.0.1', '93.184.216.34', '2606:4700:4700::1111', '::ffff:8.8.8.8'])(
-    'allows %s',
-    (address) => {
-      expect(isForbiddenAddress(address)).toBe(false);
-    },
-  );
+  it.each([
+    '8.8.8.8',
+    '1.1.1.1',
+    '172.32.0.1',
+    '93.184.216.34',
+    '2606:4700:4700::1111',
+    '::ffff:8.8.8.8',
+    '::ffff:808:808',
+    '64:ff9b::808:808',
+  ])('allows %s', (address) => {
+    expect(isForbiddenAddress(address)).toBe(false);
+  });
 });
 
 describe('guardedLookup', () => {

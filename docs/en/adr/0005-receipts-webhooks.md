@@ -29,6 +29,10 @@ A PEC is legally meaningful through its receipts: the sender's provider issues a
 | `mailbox.suspended` recorded only when the state changes (IMAP or SMTP login refused, or operator)                                                                                                                                                                               | A login refused every minute must not flood the client with the same event.                                                                                                                                                                        |
 | Liveness: a loop sleeping on purpose counts as alive until its planned wake-up                                                                                                                                                                                                   | Found while testing: with a 60 s receipt poll the probe saw the loop as idle; with a poll of 5 min or more, the container would have been restarted forever.                                                                                       |
 
+## Review (same day)
+
+A second reading of stages 4 and 5 found thirteen issues, fixed before release; the list is in `documentation.md` ("Review of stages 4 and 5"). The ones that changed a decision above: the reader handles one mail at a time and downloads a body only when the headers allow a receipt; a first read starts from the settlement window; an operator's suspension no longer stops reading; a receipt may also move a PENDING message (requeued by an operator); webhook secrets must be at least 32 characters; IPv4 carried in IPv6 (mapped, NAT64) is judged as IPv4.
+
 ## Consequences
 
 - Deploying 0.5.0: build the image, run `db sync-indexes` (new collections `receipts`, `imap_cursors`, `webhook_events`, new message indexes), roll out. New optional config sections `receipts` and `webhooks`.

@@ -56,6 +56,16 @@ export function normaliseMessageId(value: string | undefined): string | undefine
   return trimmed.startsWith('<') ? trimmed : `<${trimmed}>`;
 }
 
+/**
+ * A first look at a mail's top-level X-Ricevuta and X-Trasporto header lines,
+ * before its body is downloaded: false means it cannot be a receipt (no
+ * X-Ricevuta, or a PEC envelope), so a large ordinary PEC is never fetched.
+ * The decision itself stays with parseReceipt, on the whole mail.
+ */
+export function mayBeReceipt(topLevelHeaders: string): boolean {
+  return /^x-ricevuta[ \t]*:/im.test(topLevelHeaders) && !/^x-trasporto[ \t]*:/im.test(topLevelHeaders);
+}
+
 function headerText(value: unknown): string | undefined {
   if (typeof value === 'string') {
     return value;

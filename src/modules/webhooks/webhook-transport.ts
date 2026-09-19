@@ -26,9 +26,11 @@ export const WEBHOOK_TRANSPORT = Symbol('WEBHOOK_TRANSPORT');
 
 /**
  * HTTPS only, certificate verified, no redirect followed (a 3xx is a failed
- * delivery: following it would let the endpoint send us anywhere), response
- * body read and discarded, and - unless the tenant allows it - no connection
- * to a private or reserved address.
+ * delivery: following it would let the endpoint send us anywhere), and -
+ * unless the tenant allows it - no connection to a private or reserved
+ * address. One deadline covers the whole exchange (DNS, TLS, headers): an
+ * endpoint that answers slowly, or drips its response, cannot hold the
+ * dispatcher. Only the status matters, so the body is never read.
  */
 @Injectable()
 export class HttpsWebhookTransport implements WebhookTransport {
@@ -52,22 +54,24 @@ export class HttpsWebhookTransport implements WebhookTransport {
         {
           method: 'POST',
           headers: { ...input.headers, 'content-length': String(Buffer.byteLength(input.body)) },
-          timeout: input.timeoutMs,
+          // A fresh connection per notification: nothing pooled outlives a change of DNS.
+          agent: false,
           ...(input.allowPrivateNetwork ? {} : { lookup: guardedLookup }),
           ...(this.options.ca === undefined ? {} : { ca: this.options.ca }),
         },
         (response) => {
-          response.resume();
-          response.on('end', () => {
-            resolve({ status: response.statusCode ?? 0 });
-          });
-          response.on('error', reject);
+          clearTimeout(deadline);
+          resolve({ status: response.statusCode ?? 0 });
+          response.destroy();
         },
       );
-      req.on('timeout', () => {
+      const deadline = setTimeout(() => {
         req.destroy(new Error(`no answer within ${String(input.timeoutMs)} ms`));
+      }, input.timeoutMs);
+      req.on('error', (error) => {
+        clearTimeout(deadline);
+        reject(error);
       });
-      req.on('error', reject);
       req.end(input.body);
     });
   }

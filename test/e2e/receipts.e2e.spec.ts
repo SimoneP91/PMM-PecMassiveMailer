@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import { MongoClient, type Collection } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { asTenantId } from '../../src/common/types/branded';
+import { asMailboxCode, asMessageId, asTenantId } from '../../src/common/types/branded';
 import { EventOutbox } from '../../src/modules/events/event-outbox';
+import { MailboxStateStore } from '../../src/modules/mailboxes/mailbox-state.store';
 import { SettlementJob } from '../../src/modules/receipts/settlement-job';
+import { MessageQueueRepository } from '../../src/modules/sending/message-queue.repository';
 import { verifySignature } from '../../src/modules/webhooks/signature';
 import { FakeSmtpServer } from '../helpers/fake-smtp';
 import { FakeWebhookTransport } from '../helpers/fake-webhook';
@@ -33,7 +35,7 @@ let db: MongoClient;
 const receipts = new FakeReceiptSourceFactory();
 const webhooks = new FakeWebhookTransport();
 const MAILBOX = 'serfin-aruba';
-const SECRET = 'whsec-serfin';
+const SECRET = 'whsec-serfin-0123456789abcdef0123456789abcdef';
 
 const messages = (): Collection => db.db().collection('messages');
 
@@ -259,23 +261,78 @@ describe('receipts and settlement', () => {
     await waitForMessage(ids.get('d') ?? '', 'ACCEPTED');
 
     const before = await db.db().collection('receipts').countDocuments();
-    const fetches = receipts.fetches;
+    const bodies = receipts.bodies;
     receipts.deliver(MAILBOX, acceptance);
+    receipts.deliver(MAILBOX, Buffer.from('From: a@pec.it\r\nTo: b@pec.it\r\nSubject: hi\r\n\r\nhello\r\n'));
     receipts.deliver(
       MAILBOX,
       buildEnvelope(buildReceipt({ kind: 'errore-consegna', ref: rfc.get('d') ?? '' })),
     );
-    receipts.deliver(
+    const last = receipts.deliver(
       MAILBOX,
       buildReceipt({ kind: 'avvenuta-consegna', ref: '<m_unknown000000001@pec.serfin.example>' }),
     );
+    // Done when this mailbox's cursor is past the last mail (the pass counter is shared by every mailbox).
     await waitFor(
-      () => Promise.resolve(receipts.fetches),
-      (n) => n >= fetches + 2,
+      () =>
+        db
+          .db()
+          .collection('imap_cursors')
+          .findOne({ _id: `${MAILBOX}:INBOX` as never }),
+      (cursor) => Number(cursor?.['lastUid'] ?? 0) >= last,
     );
 
     expect(await db.db().collection('receipts').countDocuments()).toBe(before);
     expect(await messageView(ids.get('d') ?? '')).toMatchObject({ status: 'ACCEPTED' });
+    // Only the two receipts were downloaded: the envelope and the plain mail were judged by their headers.
+    expect(receipts.bodies - bodies).toBe(2);
+  });
+
+  it('re-applies a receipt stored before a crash that left its message behind', async () => {
+    const { ids, rfc } = await sendAll(['crash']);
+    const id = ids.get('crash') ?? '';
+    const message = await messages().findOne({ _id: id as never });
+    const receiptMessageId = '<opec21.crash.1@pec.aruba.it>';
+    // What a crash between the two writes leaves: the receipt stored, the message still SENT.
+    await db
+      .db()
+      .collection('receipts')
+      .insertOne({
+        _id: 'r_CrashReceipt0001' as never,
+        tenantId: message?.['tenantId'] as string,
+        batchId: message?.['batchId'] as string,
+        messageId: id,
+        mailbox: MAILBOX,
+        type: 'ACCEPTANCE',
+        dedupKey: receiptMessageId,
+        refMessageId: rfc.get('crash') ?? '',
+        issuedAt: new Date(),
+        receivedAt: new Date(),
+        emlPath: 'nowhere.eml',
+        emlSha256: 'a'.repeat(64),
+        emlSize: 1,
+        createdAt: new Date(),
+      });
+
+    receipts.deliver(
+      MAILBOX,
+      buildReceipt({ kind: 'accettazione', ref: rfc.get('crash') ?? '', messageId: receiptMessageId }),
+    );
+
+    await waitForMessage(id, 'ACCEPTED');
+    expect(await db.db().collection('receipts').countDocuments({ messageId: id })).toBe(1);
+  });
+
+  it('skips a mail that keeps failing, so the receipts after it still arrive', async () => {
+    const { ids, rfc } = await sendAll(['after-poison']);
+    const poison = receipts.deliver(
+      MAILBOX,
+      buildReceipt({ kind: 'accettazione', ref: '<m_poison0000000001@pec.serfin.example>' }),
+    );
+    receipts.broken.add(poison);
+    receipts.deliver(MAILBOX, buildReceipt({ kind: 'accettazione', ref: rfc.get('after-poison') ?? '' }));
+
+    await waitForMessage(ids.get('after-poison') ?? '', 'ACCEPTED', 15_000);
   });
 
   it('takes a STUCK message out of limbo on its acceptance receipt, without sending it again', async () => {
@@ -301,6 +358,36 @@ describe('receipts and settlement', () => {
     );
     expect(batch).toMatchObject({ status: 'SENT', counters: { stuck: 0, accepted: 1 } });
     await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(smtp.received.length).toBe(sentBefore);
+  });
+});
+
+describe('receipts against resends', () => {
+  it('resolves a requeued message from its acceptance while the mailbox is paused: no second send', async () => {
+    smtp.behaviour = { kind: 'hangAfterData' };
+    const { ids } = await submitBatch(stack, stack.serfin.key, {
+      mailbox: MAILBOX,
+      template: SIMPLE_TEMPLATE,
+      messages: [row('requeued')],
+    });
+    const id = ids.get('requeued') ?? '';
+    const stuck = await waitForMessage(id, 'STUCK', 15_000);
+    smtp.behaviour = { kind: 'accept' };
+    const sentBefore = smtp.received.length;
+
+    // An operator pauses the mailbox (sending stops, reading goes on) and requeues the message.
+    const states = worker.module.get(MailboxStateStore);
+    await states.suspend(asMailboxCode(MAILBOX), 'OPERATOR', 'paused for the test', new Date());
+    const queue = worker.module.get(MessageQueueRepository);
+    expect(await queue.resolveStuck(asMessageId(id), 'requeue', 'test', new Date())).toBe(true);
+    expect(await messageView(id)).toMatchObject({ status: 'PENDING' });
+
+    // The acceptance of the first attempt arrives before the resend.
+    receipts.deliver(MAILBOX, buildReceipt({ kind: 'accettazione', ref: stuck['rfcMessageId'] as string }));
+    await waitForMessage(id, 'ACCEPTED');
+
+    await states.activate(asMailboxCode(MAILBOX), new Date());
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(smtp.received.length).toBe(sentBefore);
   });
 });
@@ -365,14 +452,16 @@ describe('webhooks', () => {
 
   it('notifies mailbox.suspended once when the IMAP login is refused', async () => {
     receipts.refuseLogin = true;
-    const event = await webhook('mailbox.suspended', (data) => data['mailbox'] === MAILBOX);
+    const event = await webhook('mailbox.suspended', (data) => data['cause'] === 'IMAP_AUTH_REFUSED');
     expect(event.body.data).toMatchObject({ mailbox: MAILBOX, cause: 'IMAP_AUTH_REFUSED' });
 
     const list = (await get('/v1/mailboxes')).json<{ items: Record<string, unknown>[] }>();
     expect(list.items[0]).toMatchObject({ status: 'SUSPENDED', suspensionCause: 'IMAP_AUTH_REFUSED' });
 
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect(webhooks.ofType('mailbox.suspended')).toHaveLength(1);
+    expect(
+      webhooks.ofType('mailbox.suspended').filter((r) => r.body.includes('IMAP_AUTH_REFUSED')),
+    ).toHaveLength(1);
     receipts.refuseLogin = false;
   });
 });

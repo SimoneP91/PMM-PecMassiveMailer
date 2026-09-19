@@ -24,13 +24,63 @@ for (const [network, prefix] of [
   FORBIDDEN.addSubnet(network, prefix, 'ipv4');
 }
 for (const [network, prefix] of [
-  ['::', 128], // unspecified
-  ['::1', 128], // loopback
+  // ::/96 (with :: and ::1) and ::ffff:0:0/96 are not listed: they carry an IPv4 address,
+  // judged as such below. Listed here, BlockList would also match every IPv4 address against them.
+  ['64:ff9b:1::', 48], // local-use NAT64
   ['fc00::', 7], // unique local
   ['fe80::', 10], // link-local
   ['ff00::', 8], // multicast
 ] as const) {
   FORBIDDEN.addSubnet(network, prefix, 'ipv6');
+}
+
+/** The eight 16-bit groups of an IPv6 address; undefined when it is not one. */
+function groupsOf(address: string): number[] | undefined {
+  let text = address.toLowerCase();
+  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (dotted !== null) {
+    const [a, b, c, d] = dotted.slice(1).map(Number) as [number, number, number, number];
+    text = `${text.slice(0, dotted.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) {
+    return undefined;
+  }
+  const [first = '', second] = halves;
+  const head = first === '' ? [] : first.split(':');
+  const tail = second === undefined || second === '' ? [] : second.split(':');
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0 || (second === undefined && missing !== 0)) {
+    return undefined;
+  }
+  const groups = [...head, ...Array<string>(missing).fill('0'), ...tail].map((group) =>
+    /^[0-9a-f]{1,4}$/.test(group) ? parseInt(group, 16) : Number.NaN,
+  );
+
+  return groups.every((group) => !Number.isNaN(group)) ? groups : undefined;
+}
+
+/**
+ * The IPv4 address an IPv6 address carries: IPv4-mapped (::ffff:a.b.c.d,
+ * which a URL parser rewrites as ::ffff:xxxx:xxxx), IPv4-compatible
+ * (::a.b.c.d, deprecated; :: and ::1 fall here too, as 0.0.0.0 and 0.0.0.1)
+ * or NAT64 (64:ff9b::a.b.c.d, how an IPv6-only cluster reaches IPv4 hosts).
+ */
+function embeddedIpv4(address: string): string | undefined {
+  const g = groupsOf(address);
+  if (g === undefined) {
+    return undefined;
+  }
+  const zeros = (from: number, to: number): boolean => g.slice(from, to).every((group) => group === 0);
+  const mapped = zeros(0, 5) && (g[5] === 0xffff || g[5] === 0);
+  const nat64 = g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6);
+  if (!mapped && !nat64) {
+    return undefined;
+  }
+  const high = g[6] ?? 0;
+  const low = g[7] ?? 0;
+
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.');
 }
 
 export function isForbiddenAddress(address: string): boolean {
@@ -39,10 +89,9 @@ export function isForbiddenAddress(address: string): boolean {
     return true;
   }
   if (family === 6) {
-    // IPv4-mapped (::ffff:10.0.0.1) is judged as the IPv4 address it carries.
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
-    if (mapped?.[1] !== undefined) {
-      return FORBIDDEN.check(mapped[1], 'ipv4');
+    const carried = embeddedIpv4(address);
+    if (carried !== undefined) {
+      return FORBIDDEN.check(carried, 'ipv4');
     }
 
     return FORBIDDEN.check(address, 'ipv6');

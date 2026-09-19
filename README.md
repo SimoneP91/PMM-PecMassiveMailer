@@ -25,7 +25,7 @@ Node 24 · TypeScript 5.9 (strict, no `any`) · NestJS 11 on Fastify · MongoDB 
 ## Quick start
 
 ```bash
-cp .env.example .env
+cp .env.example .env                              # then set every change-me: WEBHOOK_*_SECRET wants openssl rand -hex 32
 cp config/pecmailer.example.yaml config/pecmailer.yaml
 npm install
 npm run build

@@ -139,8 +139,9 @@ export class BatchQueryService {
       // Cancelled is final: nothing to wait for.
       { $set: { status: 'CANCELLED', cancelledAt: now, settlement: 'SETTLED', settledAt: now } },
     );
+    // Recorded only on a batch that was still open: a cancel after the end changes nothing.
     await this.batches.updateOne(
-      { _id: batch._id, cancelRequestedAt: { $exists: false } },
+      { _id: batch._id, status: { $in: ['QUEUED', 'SENDING'] }, cancelRequestedAt: { $exists: false } },
       { $set: { cancelRequestedAt: now } },
     );
     await this.lifecycle.completeIfDone(batch._id, now);

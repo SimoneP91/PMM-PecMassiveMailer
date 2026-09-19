@@ -103,3 +103,5 @@ batchSchema.index({ tenantId: 1, createdAt: -1, _id: -1 });
 batchSchema.index({ tenantId: 1, reference: 1, createdAt: -1 });
 batchSchema.index({ tenantId: 1, subTenant: 1, createdAt: -1 });
 batchSchema.index({ tenantId: 1, status: 1, createdAt: -1 });
+// Settlement job: open batches not touched for a while, oldest first.
+batchSchema.index({ status: 1, updatedAt: 1 });

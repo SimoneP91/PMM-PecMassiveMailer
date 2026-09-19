@@ -74,7 +74,7 @@ export interface TestStackOptions {
   readonly sending?: Partial<SendingConfig>;
   readonly receipts?: Partial<ReceiptsConfig>;
   readonly webhooks?: Partial<WebhooksConfig>;
-  /** Gives Serfin a webhook (secret "whsec-serfin"), so events are recorded. */
+  /** Gives Serfin a webhook (secret "whsec-serfin-0123456789abcdef0123456789abcdef"), so events are recorded. */
   readonly webhook?: boolean;
 }
 
@@ -156,7 +156,7 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
     {
       MAILBOX_SERFIN_ARUBA_PASSWORD: 'pw',
       MAILBOX_IQERA_LEGALMAIL_PASSWORD: 'pw',
-      WEBHOOK_SERFIN_SECRET: 'whsec-serfin',
+      WEBHOOK_SERFIN_SECRET: 'whsec-serfin-0123456789abcdef0123456789abcdef',
     },
   );
 

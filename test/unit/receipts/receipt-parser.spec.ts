@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normaliseMessageId, parseReceipt } from '../../../src/modules/receipts/receipt-parser';
+import { mayBeReceipt, normaliseMessageId, parseReceipt } from '../../../src/modules/receipts/receipt-parser';
 import { buildEnvelope, buildReceipt } from '../../helpers/receipts';
 
 const REF = '<m_abcdef0123456789@pec.serfin.example>';
@@ -77,6 +77,17 @@ describe('parseReceipt', () => {
 
     expect(await parseReceipt(plain)).toMatchObject({ kind: 'ignored', reason: 'no X-Ricevuta header' });
     expect(await parseReceipt(odd)).toMatchObject({ kind: 'ignored' });
+  });
+});
+
+describe('mayBeReceipt', () => {
+  it('looks at the top-level X-Ricevuta and X-Trasporto lines only', () => {
+    expect(mayBeReceipt('X-Ricevuta: accettazione\r\n')).toBe(true);
+    expect(mayBeReceipt('x-ricevuta:avvenuta-consegna\r\n')).toBe(true);
+    expect(mayBeReceipt('X-Trasporto: posta-certificata\r\n')).toBe(false);
+    expect(mayBeReceipt('X-Ricevuta: accettazione\r\nX-Trasporto: errore\r\n')).toBe(false);
+    expect(mayBeReceipt('')).toBe(false);
+    expect(mayBeReceipt('X-Ricevuta-Foo: x\r\n')).toBe(false);
   });
 });
 

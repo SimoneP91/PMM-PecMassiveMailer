@@ -126,6 +126,25 @@ function requireSecret(source: EnvSource, variable: string, purpose: string): Se
   return new Secret(value);
 }
 
+/**
+ * A webhook secret signs every notification with HMAC-SHA256. Anyone holding
+ * one signed notification can try secrets offline, so a short one is refused.
+ * The message names the variable, never the value.
+ */
+export const MIN_SIGNING_SECRET_LENGTH = 32;
+
+function requireSigningSecret(source: EnvSource, variable: string, purpose: string): Secret {
+  const secret = requireSecret(source, variable, purpose);
+  if (secret.reveal().length < MIN_SIGNING_SECRET_LENGTH) {
+    throw new ConfigLoadError(
+      `${purpose}: ${variable} must be at least ${String(MIN_SIGNING_SECRET_LENGTH)} characters; ` +
+        'generate one with: openssl rand -hex 32',
+    );
+  }
+
+  return secret;
+}
+
 function resolveTenant(tenant: TenantConfig, source: EnvSource): ResolvedTenant {
   return {
     id: asTenantId(tenant.id),
@@ -137,7 +156,11 @@ function resolveTenant(tenant: TenantConfig, source: EnvSource): ResolvedTenant 
         ? null
         : {
             url: tenant.webhook.url,
-            secret: requireSecret(source, tenant.webhook.secretEnv, `tenant "${tenant.id}" webhook secret`),
+            secret: requireSigningSecret(
+              source,
+              tenant.webhook.secretEnv,
+              `tenant "${tenant.id}" webhook secret`,
+            ),
             allowPrivateNetwork: tenant.webhook.allowPrivateNetwork,
           },
     limits: tenant.limits,

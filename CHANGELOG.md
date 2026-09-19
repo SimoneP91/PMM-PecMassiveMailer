@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-19
+
+Review of stages 4 and 5.
+
+### Changed
+
+- Webhook signing secrets must be at least 32 characters (`openssl rand -hex 32`); a shorter one stops the boot with a message naming the variable.
+- The receipt reader fetches the `X-Ricevuta` and `X-Trasporto` headers first and downloads a mail only when it may be a receipt, one mail at a time.
+- The first read of a receipts folder (or a read after a UIDVALIDITY change) starts from the last `settleAfterHours` + 24 hours.
+- An operator's suspension stops sending only; receipts are still read. A refused login still stops both.
+
+### Fixed
+
+- The receipt reader could run out of memory: up to 200 whole mails were held before processing.
+- A mail that failed every time blocked every later receipt of its mailbox; it is now skipped after three failures, with an error in the log.
+- A crash between storing a receipt and moving its message left the message without its outcome; a stored receipt is now applied again.
+- A STUCK message requeued by an operator was sent again even when its acceptance had already arrived.
+- A webhook endpoint answering slowly, or dripping its response, blocked all notifications; one deadline now covers the whole exchange.
+- IPv4-mapped addresses in their hexadecimal form (`::ffff:a00:1`) and NAT64 addresses passed the anti-SSRF check.
+- A dispatcher whose delivery outlived its lock could overwrite the outcome recorded by the dispatcher that took the event over.
+- The outbox ignored a duplicate-key error inside a transaction, which aborts the transaction.
+- A cancel on a finished batch set `cancelRequestedAt`.
+- The settlement job scanned the batches without an index (new index `{status, updatedAt}`: run `db sync-indexes`).
+
 ## [0.5.0] - 2026-09-19
 
 Stage 5: receipts, settlement and webhooks.

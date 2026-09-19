@@ -3,15 +3,31 @@ import { ImapFlow } from 'imapflow';
 
 import type { ResolvedImap, ResolvedMailbox } from '../../config/config.loader';
 
-export interface FetchedMail {
+/** One mail of the folder, before its body is downloaded. */
+export interface SourceMail {
   readonly uid: number;
-  readonly raw: Buffer;
   readonly internalDate: Date | undefined;
+  /**
+   * The mail's top-level X-Ricevuta and X-Trasporto header lines, as the
+   * server returned them: enough to tell that a mail cannot be a receipt.
+   */
+  readonly headers: string;
+  /** The whole mail, byte for byte. Fetched only when asked for. */
+  body(): Promise<Buffer>;
 }
 
-export interface FetchedBatch {
-  readonly uidValidity: string;
-  readonly mails: readonly FetchedMail[];
+export interface ReadPosition {
+  /** Last UID handled; 0 when there is no cursor yet. */
+  readonly afterUid: number;
+  /** The UIDVALIDITY the cursor belongs to; undefined when there is no cursor yet. */
+  readonly uidValidity: string | undefined;
+  /**
+   * Where to start when the cursor cannot be used (first read of the folder,
+   * or the folder was recreated): the mails received since this day. A
+   * mailbox that has been in use for years is not read from its first mail.
+   */
+  readonly since: Date;
+  readonly max: number;
 }
 
 /** The login was refused: the mailbox must be suspended, not retried. */
@@ -29,12 +45,17 @@ export class ReceiptSourceAuthError extends Error {
  */
 export interface ReceiptSource {
   /**
-   * Mails with a UID above `afterUid`, oldest first, at most `max`. When the
-   * folder's UIDVALIDITY differs from `knownUidValidity`, reading starts from
-   * the beginning.
+   * Hands the mails after the position to `handle`, oldest first, at most
+   * `max`, one at a time: the next is fetched once `handle` is done with the
+   * previous, so a folder full of large receipts (a complete delivery
+   * receipt carries the whole original message) never sits in memory.
+   * `handle` gets the folder's UIDVALIDITY with each mail and returns false
+   * to stop.
    */
-  fetchAfter(afterUid: number, max: number, knownUidValidity: string | undefined): Promise<FetchedBatch>;
-  close(): Promise<void>;
+  read(
+    position: ReadPosition,
+    handle: (mail: SourceMail, uidValidity: string) => Promise<boolean>,
+  ): Promise<void>;
 }
 
 export interface ReceiptSourceFactory {
@@ -46,11 +67,10 @@ export const RECEIPT_SOURCE_FACTORY = Symbol('RECEIPT_SOURCE_FACTORY');
 class ImapflowReceiptSource implements ReceiptSource {
   public constructor(private readonly imap: ResolvedImap) {}
 
-  public async fetchAfter(
-    afterUid: number,
-    max: number,
-    knownUidValidity: string | undefined,
-  ): Promise<FetchedBatch> {
+  public async read(
+    position: ReadPosition,
+    handle: (mail: SourceMail, uidValidity: string) => Promise<boolean>,
+  ): Promise<void> {
     const client = new ImapFlow({
       host: this.imap.host,
       port: this.imap.port,
@@ -75,32 +95,44 @@ class ImapflowReceiptSource implements ReceiptSource {
       try {
         const opened = client.mailbox;
         const uidValidity = opened === false ? '0' : String(opened.uidValidity);
-        const from = uidValidity === knownUidValidity ? afterUid : 0;
-        const found = await client.search({ uid: `${String(from + 1)}:*` }, { uid: true });
-        // "N:*" also matches the last message when N is past the end: filter.
+        const resume = uidValidity === position.uidValidity;
+        const found = await client.search(
+          resume ? { uid: `${String(position.afterUid + 1)}:*` } : { since: position.since },
+          { uid: true },
+        );
         const uids = (Array.isArray(found) ? found : [])
-          .filter((uid) => uid > from)
+          // "N:*" also matches the last message when N is past the end: filter.
+          .filter((uid) => !resume || uid > position.afterUid)
           .sort((a, b) => a - b)
-          .slice(0, max);
+          .slice(0, position.max);
 
-        const mails: FetchedMail[] = [];
         for (const uid of uids) {
-          const message = await client.fetchOne(
+          const head = await client.fetchOne(
             String(uid),
-            { source: true, internalDate: true },
+            { headers: ['x-ricevuta', 'x-trasporto'], internalDate: true },
             { uid: true },
           );
-          if (message !== false && message?.source !== undefined) {
-            const date = message.internalDate;
-            mails.push({
-              uid,
-              raw: message.source,
-              internalDate: date === undefined ? undefined : new Date(date),
-            });
+          if (head === false || head === undefined) {
+            continue; // expunged meanwhile
+          }
+          const date = head.internalDate;
+          const mail: SourceMail = {
+            uid,
+            internalDate: date === undefined ? undefined : new Date(date),
+            headers: head.headers?.toString('utf8') ?? '',
+            body: async () => {
+              const full = await client.fetchOne(String(uid), { source: true }, { uid: true });
+              if (full === false || full?.source === undefined) {
+                throw new Error(`mail ${String(uid)} disappeared while it was being read`);
+              }
+
+              return full.source;
+            },
+          };
+          if (!(await handle(mail, uidValidity))) {
+            break;
           }
         }
-
-        return { uidValidity, mails };
       } finally {
         lock.release();
       }
@@ -109,10 +141,6 @@ class ImapflowReceiptSource implements ReceiptSource {
         client.close();
       });
     }
-  }
-
-  public close(): Promise<void> {
-    return Promise.resolve();
   }
 }
 

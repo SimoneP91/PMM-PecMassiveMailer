@@ -37,7 +37,7 @@ function file(overrides: Partial<PecmailerConfigFile['mailboxes'][number]> = {})
 }
 
 const env = parseEnv({ MONGODB_URI: 'mongodb://localhost/pecmailer' });
-const secrets = { MAILBOX_SERFIN_ARUBA_PASSWORD: 'pw', WEBHOOK_SERFIN_SECRET: 'hmac' };
+const secrets = { MAILBOX_SERFIN_ARUBA_PASSWORD: 'pw', WEBHOOK_SERFIN_SECRET: 'h'.repeat(32) };
 
 describe('passwordEnvName', () => {
   it('upper-cases the code and normalises punctuation', () => {
@@ -59,7 +59,7 @@ describe('resolveConfig', () => {
     });
     expect(mailbox.smtp.password).toBeInstanceOf(Secret);
     expect(mailbox.smtp.password.reveal()).toBe('pw');
-    expect(resolved.tenants[0]?.webhook?.secret.reveal()).toBe('hmac');
+    expect(resolved.tenants[0]?.webhook?.secret.reveal()).toBe(secrets.WEBHOOK_SERFIN_SECRET);
   });
 
   it('never exposes a secret through serialisation', () => {
@@ -104,10 +104,9 @@ describe('resolveConfig', () => {
   });
 
   it('stops when a mailbox password is missing from the environment', () => {
-    expect(() => resolveConfig(file(), env, { WEBHOOK_SERFIN_SECRET: 'x' })).toThrow(ConfigLoadError);
-    expect(() => resolveConfig(file(), env, { WEBHOOK_SERFIN_SECRET: 'x' })).toThrow(
-      /MAILBOX_SERFIN_ARUBA_PASSWORD/,
-    );
+    const noPassword = { WEBHOOK_SERFIN_SECRET: secrets.WEBHOOK_SERFIN_SECRET };
+    expect(() => resolveConfig(file(), env, noPassword)).toThrow(ConfigLoadError);
+    expect(() => resolveConfig(file(), env, noPassword)).toThrow(/MAILBOX_SERFIN_ARUBA_PASSWORD/);
   });
 
   it('treats an empty password as missing', () => {
@@ -120,6 +119,14 @@ describe('resolveConfig', () => {
     const resolved = resolveConfig(file({ passwordEnv: 'MY_PW' }), env, { ...secrets, MY_PW: 'other' });
 
     expect(resolved.mailboxes[0]?.smtp.password.reveal()).toBe('other');
+  });
+
+  it('refuses a webhook secret too short to sign with, without printing it', () => {
+    const attempt = (): unknown =>
+      resolveConfig(file(), env, { ...secrets, WEBHOOK_SERFIN_SECRET: 'change-me' });
+
+    expect(attempt).toThrow(/WEBHOOK_SERFIN_SECRET must be at least 32 characters/);
+    expect(attempt).not.toThrow(/change-me/);
   });
 
   it('stops when the webhook secret is missing', () => {

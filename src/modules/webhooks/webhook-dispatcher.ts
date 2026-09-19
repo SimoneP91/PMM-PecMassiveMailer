@@ -147,10 +147,10 @@ export class WebhookDispatcher {
 
       return 'failed';
     }
-    await this.events.updateOne(
-      { _id: event._id, status: 'DELIVERING' },
-      { $set: { status: 'PENDING', nextAttemptAt: next, ...details }, $unset: { lockedUntil: 1 } },
-    );
+    await this.events.updateOne(this.stillMine(event), {
+      $set: { status: 'PENDING', nextAttemptAt: next, ...details },
+      $unset: { lockedUntil: 1 },
+    });
     this.logger.warn(
       { eventId: event._id, type: event.type, tenantId: event.tenantId, attempts: event.attempts, failure },
       'webhook not delivered; will retry',
@@ -164,9 +164,19 @@ export class WebhookDispatcher {
     status: 'DELIVERED' | 'FAILED',
     fields: Partial<Pick<WebhookEventDocument, 'deliveredAt' | 'lastStatusCode' | 'lastError'>>,
   ): Promise<void> {
-    await this.events.updateOne(
-      { _id: event._id, status: 'DELIVERING' },
-      { $set: { status, ...fields }, $unset: { lockedUntil: 1 } },
-    );
+    await this.events.updateOne(this.stillMine(event), {
+      $set: { status, ...fields },
+      $unset: { lockedUntil: 1 },
+    });
+  }
+
+  /**
+   * The bookkeeping of a delivery applies only while the claim is still ours:
+   * the lock time set by the claim is its fencing token. If this delivery
+   * outlived its lock and another dispatcher took the event over, the other
+   * one's outcome stands.
+   */
+  private stillMine(event: WebhookEventDocument): Record<string, unknown> {
+    return { _id: event._id, status: 'DELIVERING', lockedUntil: event.lockedUntil };
   }
 }

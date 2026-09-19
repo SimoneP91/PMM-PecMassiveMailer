@@ -1,6 +1,6 @@
 {
   "name": "pecmailer",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Multi-tenant PEC (certified e-mail) sending microservice",
   "private": true,
   "license": "UNLICENSED",
