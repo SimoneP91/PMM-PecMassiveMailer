@@ -8,11 +8,11 @@ import type { Env } from '../config/env.schema';
 import { DatabaseModule } from '../database/database.module';
 import { MailboxesModule } from '../modules/mailboxes/mailboxes.module';
 import { SendingModule } from '../modules/sending/sending.module';
+import { WebhooksModule } from '../modules/webhooks/webhooks.module';
 import { TenantsModule } from '../modules/tenants/tenants.module';
 
 /**
  * Context for the admin commands that touch the database or the providers.
- * Logs are kept to warnings so the command's own output stays readable.
  */
 @Module({})
 export class CliModule {
@@ -21,11 +21,14 @@ export class CliModule {
       module: CliModule,
       imports: [
         ConfigModule.forRoot(env, config),
-        LoggerModule.forRoot(buildLoggerParams({ ...env, LOG_LEVEL: 'warn', LOG_PRETTY: true })),
+        // Warnings only, so the command's own output stays readable. Never force
+        // pretty printing: pino-pretty is a dev dependency, absent from the image.
+        LoggerModule.forRoot(buildLoggerParams({ ...env, LOG_LEVEL: 'warn' })),
         DatabaseModule,
         TenantsModule,
         MailboxesModule,
         SendingModule,
+        WebhooksModule,
       ],
     };
   }

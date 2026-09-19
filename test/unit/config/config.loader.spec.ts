@@ -71,7 +71,11 @@ describe('resolveConfig', () => {
   });
 
   it('lets an explicit value win over the preset', () => {
-    const resolved = resolveConfig(file({ imap: { enabled: true, sentFolder: 'INBOX.Sent' } }), env, secrets);
+    const resolved = resolveConfig(
+      file({ imap: { enabled: true, sentFolder: 'INBOX.Sent', receiptsFolder: 'INBOX' } }),
+      env,
+      secrets,
+    );
 
     expect(resolved.mailboxes[0]?.imap?.sentFolder).toBe('INBOX.Sent');
     expect(resolved.mailboxes[0]?.imap?.host).toBe('imaps.pec.aruba.it');
@@ -94,7 +98,7 @@ describe('resolveConfig', () => {
   });
 
   it('turns imap off when the mailbox says so', () => {
-    const resolved = resolveConfig(file({ imap: { enabled: false } }), env, secrets);
+    const resolved = resolveConfig(file({ imap: { enabled: false, receiptsFolder: 'INBOX' } }), env, secrets);
 
     expect(resolved.mailboxes[0]?.imap).toBeNull();
   });

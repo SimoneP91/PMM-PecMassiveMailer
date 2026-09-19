@@ -14,7 +14,12 @@ export async function withApp(
   try {
     const env = parseEnv(source);
     const config = await loadConfig(env, source);
-    app = await NestFactory.createApplicationContext(CliModule.forRoot(env, config), { logger: false });
+    // abortOnError false: a failed boot must reach the catch below and be
+    // reported, not end the process silently.
+    app = await NestFactory.createApplicationContext(CliModule.forRoot(env, config), {
+      logger: false,
+      abortOnError: false,
+    });
   } catch (error: unknown) {
     if (error instanceof EnvValidationError || error instanceof ConfigLoadError) {
       console.error(error.message);

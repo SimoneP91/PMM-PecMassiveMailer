@@ -37,14 +37,23 @@ export class MailboxesController {
     const states = await this.states.getMany(mailboxes.map((mailbox) => mailbox.code));
 
     return {
-      items: mailboxes.map((mailbox) => ({
-        mailbox: mailbox.code,
-        from: mailbox.from,
-        provider: mailbox.provider,
-        status: states.get(mailbox.code)?.status ?? 'ACTIVE',
-        archivesSentCopy: mailbox.imap !== null,
-        limits: mailbox.limits,
-      })),
+      items: mailboxes.map((mailbox) => {
+        const state = states.get(mailbox.code);
+        const suspended = state?.status === 'SUSPENDED';
+
+        return {
+          mailbox: mailbox.code,
+          from: mailbox.from,
+          provider: mailbox.provider,
+          status: state?.status ?? 'ACTIVE',
+          ...(suspended && state.changedAt !== undefined
+            ? { suspendedAt: state.changedAt.toISOString() }
+            : {}),
+          ...(suspended && state.cause !== undefined ? { suspensionCause: state.cause } : {}),
+          archivesSentCopy: mailbox.imap !== null,
+          limits: mailbox.limits,
+        };
+      }),
     };
   }
 }

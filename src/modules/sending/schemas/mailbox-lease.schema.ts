@@ -1,7 +1,5 @@
 import { Schema } from 'mongoose';
 
-import type { MailboxCode } from '../../../common/types/branded';
-
 export const MAILBOX_LEASE_MODEL = 'MailboxLease';
 
 /**
@@ -11,7 +9,8 @@ export const MAILBOX_LEASE_MODEL = 'MailboxLease';
  * number of replicas, so this is what keeps N worker replicas safe.
  */
 export interface MailboxLeaseDocument {
-  readonly _id: MailboxCode;
+  /** The mailbox code for sending, "receipts:<code>" for reading receipts. */
+  readonly _id: string;
   readonly owner: string;
   readonly acquiredAt: Date;
   readonly expiresAt: Date;

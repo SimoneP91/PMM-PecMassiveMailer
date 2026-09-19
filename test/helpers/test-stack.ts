@@ -17,10 +17,19 @@ import { requestIdFrom } from '../../src/common/http/request-id';
 import { generateApiKey } from '../../src/common/security/hash';
 import { resolveConfig, type ResolvedConfig } from '../../src/config/config.loader';
 import { parseEnv, type Env } from '../../src/config/env.schema';
-import { pecmailerConfigSchema, type SendingConfig } from '../../src/config/pecmailer-config.schema';
+import {
+  pecmailerConfigSchema,
+  type ReceiptsConfig,
+  type SendingConfig,
+  type WebhooksConfig,
+} from '../../src/config/pecmailer-config.schema';
 import { MX_RESOLVER } from '../../src/modules/recipients/recipient-verifier';
 import { SENT_ARCHIVER_FACTORY } from '../../src/modules/sending/imap/sent-archiver';
+import { RECEIPT_SOURCE_FACTORY } from '../../src/modules/receipts/receipt-source';
+import { WEBHOOK_TRANSPORT } from '../../src/modules/webhooks/webhook-transport';
 import { FakeSentArchiverFactory } from './fake-archiver';
+import { FakeWebhookTransport } from './fake-webhook';
+import { FakeReceiptSourceFactory } from './receipts';
 import { FakeMxResolver } from './fake-mx';
 
 /**
@@ -63,6 +72,10 @@ export interface TestStackOptions {
   readonly smtp?: { readonly host: string; readonly port: number };
   readonly smtpTimeoutSeconds?: number;
   readonly sending?: Partial<SendingConfig>;
+  readonly receipts?: Partial<ReceiptsConfig>;
+  readonly webhooks?: Partial<WebhooksConfig>;
+  /** Gives Serfin a webhook (secret "whsec-serfin"), so events are recorded. */
+  readonly webhook?: boolean;
 }
 
 export async function startTestStack(options: TestStackOptions = {}): Promise<TestStack> {
@@ -95,6 +108,14 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
           externalId: '195',
           name: 'Serfin',
           apiKeys: [{ id: 'k1', sha256: serfinKey.sha256 }],
+          ...(options.webhook === true
+            ? {
+                webhook: {
+                  url: 'https://crm.serfin.example/pecmailer/events',
+                  secretEnv: 'WEBHOOK_SERFIN_SECRET',
+                },
+              }
+            : {}),
           limits: {
             requestsPerMinute: options.requestsPerMinute ?? 1000,
             maxMessagesPerBatch: options.maxMessagesPerBatch ?? 2500,
@@ -128,9 +149,15 @@ export async function startTestStack(options: TestStackOptions = {}): Promise<Te
       ],
       recipients: { pecDomains: ['pec.custom.example'] },
       sending: options.sending ?? {},
+      receipts: options.receipts ?? {},
+      webhooks: options.webhooks ?? {},
     }),
     env,
-    { MAILBOX_SERFIN_ARUBA_PASSWORD: 'pw', MAILBOX_IQERA_LEGALMAIL_PASSWORD: 'pw' },
+    {
+      MAILBOX_SERFIN_ARUBA_PASSWORD: 'pw',
+      MAILBOX_IQERA_LEGALMAIL_PASSWORD: 'pw',
+      WEBHOOK_SERFIN_SECRET: 'whsec-serfin',
+    },
   );
 
   const mx = new FakeMxResolver();
@@ -173,15 +200,30 @@ export interface TestWorker {
   readonly module: TestingModule;
   readonly runner: WorkerRunner;
   readonly archiver: FakeSentArchiverFactory;
+  readonly receipts: FakeReceiptSourceFactory;
+  readonly webhooks: FakeWebhookTransport;
   stop(): Promise<void>;
 }
 
-/** The worker process, in-process, against the same database and storage as the API stack. */
-export async function startTestWorker(stack: TestStack): Promise<TestWorker> {
+/**
+ * The worker process, in-process, against the same database and storage as
+ * the API stack. IMAP and outgoing HTTP are always fakes: a test never
+ * reaches a real provider or a real client endpoint.
+ */
+export async function startTestWorker(
+  stack: TestStack,
+  fakes: { receipts?: FakeReceiptSourceFactory; webhooks?: FakeWebhookTransport } = {},
+): Promise<TestWorker> {
   const archiver = new FakeSentArchiverFactory();
+  const receipts = fakes.receipts ?? new FakeReceiptSourceFactory();
+  const webhooks = fakes.webhooks ?? new FakeWebhookTransport();
   const module = await Test.createTestingModule({ imports: [WorkerModule.forRoot(stack.env, stack.config)] })
     .overrideProvider(SENT_ARCHIVER_FACTORY)
     .useValue(archiver)
+    .overrideProvider(RECEIPT_SOURCE_FACTORY)
+    .useValue(receipts)
+    .overrideProvider(WEBHOOK_TRANSPORT)
+    .useValue(webhooks)
     .compile();
   await module.init();
 
@@ -189,6 +231,8 @@ export async function startTestWorker(stack: TestStack): Promise<TestWorker> {
     module,
     runner: module.get(WorkerRunner),
     archiver,
+    receipts,
+    webhooks,
     async stop(): Promise<void> {
       await module.close();
     },

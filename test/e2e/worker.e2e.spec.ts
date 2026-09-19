@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -76,6 +76,24 @@ async function submit(
   const json = response.json<{ batchId: string; messages: { ref: string; messageId: string }[] }>();
 
   return { batchId: json.batchId, ids: new Map(json.messages.map((m) => [m.ref, m.messageId])) };
+}
+
+interface BatchView {
+  status: string;
+  counters: Record<string, number>;
+  sentAt?: string;
+  sendingStartedAt?: string;
+}
+
+async function batchView(batchId: string): Promise<BatchView> {
+  const response = await stack.app.inject({
+    method: 'GET',
+    url: `/v1/batches/${batchId}`,
+    headers: { authorization: `Bearer ${stack.serfin.key}` },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+
+  return response.json<BatchView>();
 }
 
 async function messageById(id: string): Promise<Document | null> {
@@ -167,13 +185,43 @@ describe('sending', () => {
     expect(eml.replace(/\r\n/g, '\n')).toBe(first?.raw.replace(/\r\n/g, '\n'));
     expect(worker.archiver.appended.find((a) => a.eml === eml)).toBeDefined();
 
-    const batch = await batches().findOne({ _id: batchId as never });
+    const batch = await batchView(batchId);
     expect(batch).toMatchObject({
       status: 'SENT',
-      counts: { total: 3, pending: 0, sent: 3, failed: 0, stuck: 0 },
+      counters: { total: 3, pending: 0, sending: 0, sent: 3, failed: 0, stuck: 0 },
     });
-    expect(batch?.['sentAt']).toBeInstanceOf(Date);
-    expect(batch?.['sendingStartedAt']).toBeInstanceOf(Date);
+    expect(batch.sentAt).toBeDefined();
+    expect(batch.sendingStartedAt).toBeDefined();
+
+    const auth = { authorization: `Bearer ${stack.serfin.key}` };
+    const id = ids.get('r-1') ?? '';
+    const detail = await stack.app.inject({ method: 'GET', url: `/v1/messages/${id}`, headers: auth });
+    expect(detail.statusCode, detail.body).toBe(200);
+    const body = detail.json<{
+      rfcMessageId: string;
+      eml: { sha256: string; size: number };
+      attempts: { n: number; outcome: string; smtpCode?: number; detail?: string }[];
+      attemptCount: number;
+      sentCopy: string;
+      timeline: { sentAt?: string };
+    }>();
+    expect(body).toMatchObject({
+      rfcMessageId: `<${id}@pec.serfin.example>`,
+      attemptCount: 1,
+      sentCopy: 'ARCHIVED',
+      attempts: [{ n: 1, outcome: 'SENT', smtpCode: 250, detail: containing('Ok') }],
+    });
+    expect(body.timeline.sentAt).toBeDefined();
+    expect(body.eml.size).toBe(Buffer.byteLength(eml));
+
+    const download = await stack.app.inject({ method: 'GET', url: `/v1/messages/${id}/eml`, headers: auth });
+    expect(download.statusCode).toBe(200);
+    expect(download.headers['content-type']).toContain('message/rfc822');
+    expect(download.headers['content-disposition']).toBe(`attachment; filename="${id}.eml"`);
+    expect(download.rawPayload.equals(Buffer.from(eml, 'utf8'))).toBe(true);
+    const digest = createHash('sha256').update(download.rawPayload).digest();
+    expect(body.eml.sha256).toBe(digest.toString('hex'));
+    expect(download.headers['repr-digest']).toBe(`sha-256=:${digest.toString('base64')}:`);
   });
 
   it('records a failed Sent-folder copy without touching the message outcome', async () => {
@@ -200,8 +248,29 @@ describe('sending', () => {
     const doc = await waitForStatus(id, 'FAILED');
     expect(doc['lastError']).toMatchObject({ code: 'SMTP_550', detail: containing('No such user') });
     expect(doc['attempts']).toBe(1);
-    const batch = await batches().findOne({ _id: batchId as never });
-    expect(batch).toMatchObject({ status: 'SENT', counts: { pending: 0, sent: 0, failed: 1 } });
+    // A failed message is final: nothing to wait for, the batch settles at once.
+    expect(await batchView(batchId)).toMatchObject({
+      status: 'SETTLED',
+      counters: { pending: 0, sent: 0, failed: 1 },
+      settlement: { settled: 1, pending: 0 },
+    });
+    const detail = await stack.app.inject({
+      method: 'GET',
+      url: `/v1/messages/${id}`,
+      headers: { authorization: `Bearer ${stack.serfin.key}` },
+    });
+    expect(detail.json()).toMatchObject({
+      status: 'FAILED',
+      lastError: { code: 'SMTP_550' },
+      attempts: [{ n: 1, outcome: 'FAILED', smtpCode: 550 }],
+    });
+    const eml = await stack.app.inject({
+      method: 'GET',
+      url: `/v1/messages/${id}/eml`,
+      headers: { authorization: `Bearer ${stack.serfin.key}` },
+    });
+    expect(eml.statusCode).toBe(409);
+    expect(eml.json()).toMatchObject({ code: 'EML_NOT_AVAILABLE' });
   });
 
   it('retries a temporary refusal (450) and succeeds once the server recovers', async () => {
@@ -237,8 +306,10 @@ describe('sending', () => {
     const doc = await waitForStatus(id, 'STUCK', 15_000);
     expect(doc['lastError']).toMatchObject({ code: 'SMTP_NO_FINAL_REPLY' });
     expect(doc['stuckAt']).toBeInstanceOf(Date);
-    let batch = await batches().findOne({ _id: batchId as never });
-    expect(batch).toMatchObject({ status: 'SENDING', counts: { pending: 0, stuck: 1 } });
+    expect(await batchView(batchId)).toMatchObject({ status: 'SENDING', counters: { pending: 0, stuck: 1 } });
+    // What may have left is recorded, so it can be looked for and downloaded.
+    expect(doc['messageIdHeader']).toBe(`<${id}@pec.serfin.example>`);
+    expect(doc['emlSha256']).toMatch(/^[0-9a-f]{64}$/);
 
     smtp.behaviour = { kind: 'accept' };
     await new Promise((resolve) => setTimeout(resolve, 400));
@@ -247,8 +318,15 @@ describe('sending', () => {
     const queue = worker.module.get(MessageQueueRepository);
     expect(await queue.resolveStuck(asMessageId(id), 'sent', 'test', new Date())).toBe(true);
     expect(await queue.resolveStuck(asMessageId(id), 'sent', 'test', new Date())).toBe(false);
-    batch = await batches().findOne({ _id: batchId as never });
-    expect(batch).toMatchObject({ status: 'SENT', counts: { pending: 0, stuck: 0, sent: 1 } });
+    expect(await batchView(batchId)).toMatchObject({
+      status: 'SENT',
+      counters: { pending: 0, stuck: 0, sent: 1 },
+    });
+    const resolved = await messageById(id);
+    expect(resolved?.['lastError']).toMatchObject({ code: 'SMTP_NO_FINAL_REPLY' });
+    expect(resolved?.['operatorLog']).toEqual([
+      expect.objectContaining({ action: 'MARKED_SENT', by: 'test' }),
+    ]);
   });
 
   it('a STUCK message requeued by an operator is sent again with the same Message-ID', async () => {
@@ -278,7 +356,11 @@ describe('sending', () => {
       () => states.get(asMailboxCode('serfin-aruba')),
       (s) => s.status === 'SUSPENDED',
     );
-    expect(state).toMatchObject({ status: 'SUSPENDED', reason: containing('login refused') });
+    expect(state).toMatchObject({
+      status: 'SUSPENDED',
+      cause: 'SMTP_AUTH_REFUSED',
+      reason: containing('535'),
+    });
     const doc = await waitForStatus(id, 'PENDING');
     expect(doc['attempts']).toBe(0);
 
@@ -290,7 +372,7 @@ describe('sending', () => {
     expect(list.json<{ items: { status: string }[] }>().items[0]?.status).toBe('SUSPENDED');
 
     smtp.behaviour = { kind: 'accept' };
-    await states.set(asMailboxCode('serfin-aruba'), 'ACTIVE', undefined, new Date());
+    await states.activate(asMailboxCode('serfin-aruba'), new Date());
     await waitForStatus(id, 'SENT', 15_000);
   });
 });
@@ -306,7 +388,7 @@ describe('recovery and leases', () => {
       template: { subject: 's', html: '<p>x</p>', inlineImages: [] },
       options: { atomic: false, unverifiedRecipients: 'reject' },
       parts: [],
-      counts: { total: 1, pending: 1, sent: 0, delivered: 0, failed: 0, stuck: 0, cancelled: 0 },
+      messageCount: 1,
       rejectedMessages: [],
       warnings: [],
       idempotencyKey: 'stale',
@@ -318,8 +400,10 @@ describe('recovery and leases', () => {
       tenantId: 't_serfin',
       batchId: 'b_stale00000000001',
       mailbox: 'serfin-aruba',
+      position: 0,
       ref: 'stale',
       to: 'x@pec.it',
+      toLower: 'x@pec.it',
       subject: 's',
       html: '<p>x</p>',
       attachments: [],
@@ -333,6 +417,9 @@ describe('recovery and leases', () => {
       sentCopy: 'PENDING',
       workerId: 'dead-worker',
       sendingStartedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      heartbeatAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      attemptLog: [],
+      operatorLog: [],
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -342,11 +429,50 @@ describe('recovery and leases', () => {
       status: 'STUCK',
       lastError: { code: 'STALE_SENDING', detail: containing('dead-worker') },
     });
-    expect(await batches().findOne({ _id: 'b_stale00000000001' as never })).toMatchObject({
+    expect(await batchView('b_stale00000000001')).toMatchObject({
       status: 'SENDING',
-      counts: { pending: 0, stuck: 1 },
+      counters: { total: 1, sending: 0, stuck: 1 },
     });
+    expect((await messageById('m_stale00000000001'))?.['attemptLog']).toEqual([
+      expect.objectContaining({ outcome: 'STUCK', code: 'STALE_SENDING' }),
+    ]);
     expect(await worker.module.get(StuckRecovery).runOnce()).toBe(0);
+  });
+
+  it('never marks STUCK a message whose worker keeps its heartbeat', async () => {
+    await messages().insertOne({
+      _id: 'm_alive0000000001' as never,
+      tenantId: 't_serfin',
+      batchId: 'b_stale00000000001',
+      mailbox: 'serfin-aruba',
+      position: 1,
+      ref: 'alive',
+      to: 'y@pec.it',
+      toLower: 'y@pec.it',
+      subject: 's',
+      html: '<p>x</p>',
+      attachments: [],
+      inlineImages: [],
+      estimatedBytes: 1,
+      recipientCheck: 'PEC',
+      status: 'SENDING',
+      settlement: 'PENDING',
+      attempts: 1,
+      nextAttemptAt: new Date(),
+      sentCopy: 'PENDING',
+      workerId: 'slow-worker',
+      // Started two hours ago (a huge upload), but still beating.
+      sendingStartedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      heartbeatAt: new Date(),
+      attemptLog: [],
+      operatorLog: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    expect(await worker.module.get(StuckRecovery).runOnce()).toBe(0);
+    expect((await messageById('m_alive0000000001'))?.['status']).toBe('SENDING');
+    await messages().deleteOne({ _id: 'm_alive0000000001' as never });
   });
 
   it('gives a mailbox to one owner at a time and lets an expired lease be taken over', async () => {

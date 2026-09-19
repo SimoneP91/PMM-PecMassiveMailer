@@ -21,7 +21,8 @@ export async function runMailboxList(app: INestApplicationContext): Promise<numb
       lease === null || lease.expiresAt.getTime() < Date.now() ? 'no worker' : `worker ${lease.owner}`;
     console.log(
       `${mailbox.code.padEnd(24)} tenant=${mailbox.tenantId.padEnd(12)} ${(state?.status ?? 'ACTIVE').padEnd(9)} ${held}` +
-        (state?.reason === undefined ? '' : `  reason: ${state.reason}`),
+        (state?.cause === undefined ? '' : `  ${state.cause}`) +
+        (state?.reason === undefined ? '' : `: ${state.reason}`),
     );
   }
 
@@ -35,7 +36,7 @@ export async function runMailboxActivate(app: INestApplicationContext, code: str
 
     return 1;
   }
-  await app.get(MailboxStateStore).set(asMailboxCode(code), 'ACTIVE', undefined, new Date());
+  await app.get(MailboxStateStore).activate(asMailboxCode(code), new Date());
   console.log(`${code}: ACTIVE (the worker resumes within a minute)`);
 
   return 0;
@@ -54,7 +55,7 @@ export async function runMailboxSuspend(
   }
   await app
     .get(MailboxStateStore)
-    .set(asMailboxCode(code), 'SUSPENDED', reason ?? 'suspended by an operator', new Date());
+    .suspend(asMailboxCode(code), 'OPERATOR', reason ?? 'suspended by an operator', new Date());
   console.log(`${code}: SUSPENDED`);
 
   return 0;

@@ -3,15 +3,18 @@ import { readFile } from 'node:fs/promises';
 import type { PinoLogger } from 'nestjs-pino';
 
 import type { Clock } from '../../common/time/clock';
+import type { MessageId } from '../../common/types/branded';
 import type { ResolvedMailbox } from '../../config/config.loader';
 import type { SendingConfig } from '../../config/pecmailer-config.schema';
-import type { MessageDocument } from '../batches/schemas/message.schema';
+import type { MessageDocument, MessageError } from '../batches/schemas/message.schema';
 import type { MailboxStateStore } from '../mailboxes/mailbox-state.store';
 import type { SentArchiver, SentArchiverFactory } from './imap/sent-archiver';
+import { LeaseHeartbeat } from './lease-heartbeat';
 import type { MailboxLeaseService } from './mailbox-lease.service';
 import type { MailboxPacer } from './mailbox-pacer';
-import type { MessageQueueRepository } from './message-queue.repository';
-import type { EmlBuilder } from './mime/eml-builder';
+import type { AttemptReport, EmlRecord, MessageQueueRepository } from './message-queue.repository';
+import type { BuiltEml, EmlBuilder } from './mime/eml-builder';
+import { LoopPulse } from './loop-pulse';
 import type { Sleeper } from './sleeper';
 import { SmtpFailure, type SmtpClient, type SmtpClientFactory } from './smtp/smtp-client';
 import { classifySmtpFailure } from './smtp/smtp-outcome';
@@ -31,6 +34,26 @@ export interface MailboxSenderDeps {
   readonly logger: PinoLogger;
 }
 
+/** "250 2.0.0 Ok" -> 250 */
+function replyCode(response: string | undefined): number | undefined {
+  const match = /^(\d{3})/.exec(response ?? '');
+
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function emlRecord(built: BuiltEml): EmlRecord {
+  return {
+    messageIdHeader: built.messageIdHeader,
+    emlPath: built.relativePath,
+    emlSha256: built.sha256,
+    emlSize: built.size,
+  };
+}
+
 /**
  * The loop that sends one mailbox's messages, one at a time, at the pace the
  * provider allows. It runs only while it holds the mailbox's lease and stops
@@ -41,13 +64,14 @@ export interface MailboxSenderDeps {
 export class MailboxSender {
   private smtp: SmtpClient | undefined;
   private archiver: SentArchiver | undefined;
-  private lastTickAt: Date;
+  private readonly pulse: LoopPulse;
+  private setInFlight: (id: MessageId | undefined) => void = () => undefined;
 
   public constructor(
     private readonly mailbox: ResolvedMailbox,
     private readonly deps: MailboxSenderDeps,
   ) {
-    this.lastTickAt = deps.clock.now();
+    this.pulse = new LoopPulse(deps.clock);
   }
 
   public get code(): string {
@@ -56,7 +80,7 @@ export class MailboxSender {
 
   /** When the loop last did something: what the liveness probe reports. */
   public get lastTick(): Date {
-    return this.lastTickAt;
+    return this.pulse.freshAt();
   }
 
   public async run(signal: AbortSignal): Promise<void> {
@@ -67,49 +91,52 @@ export class MailboxSender {
       this.tick();
       const acquired = await leases.tryAcquire(this.mailbox.code, workerId, ttlMs, this.deps.clock.now());
       if (!acquired) {
-        await sleeper.sleep(ttlMs / 2, signal);
+        await this.pulse.sleep(sleeper, ttlMs / 2, signal);
         continue;
       }
       logger.info({ mailbox: this.mailbox.code }, 'mailbox lease acquired');
+      let inFlight: MessageId | undefined;
+      // Keeps the lease and, while one is being sent, the message alive.
+      const heartbeat = new LeaseHeartbeat(this.mailbox.code, ttlMs, this.deps, async (now) => {
+        if (inFlight !== undefined) {
+          await this.deps.queue.heartbeat(inFlight, workerId, now);
+        }
+      });
+      this.setInFlight = (id): void => {
+        inFlight = id;
+      };
       try {
-        await this.serve(signal, ttlMs);
+        await this.serve(signal, heartbeat);
       } catch (error: unknown) {
         logger.error({ err: error, mailbox: this.mailbox.code }, 'mailbox loop failed; releasing the lease');
-        await sleeper.sleep(Math.min(ttlMs, 10_000), signal);
+        await this.pulse.sleep(sleeper, Math.min(ttlMs, 10_000), signal);
       } finally {
+        heartbeat.stop();
         await this.closeClients();
+        // release() only deletes a lease we still own, so it is safe even if it was lost.
         await leases.release(this.mailbox.code, workerId).catch(() => undefined);
         logger.info({ mailbox: this.mailbox.code }, 'mailbox lease released');
       }
     }
   }
 
-  private async serve(signal: AbortSignal, ttlMs: number): Promise<void> {
-    const { queue, leases, pacer, states, sleeper, config, workerId, clock, logger } = this.deps;
-    let renewedAt = clock.now();
+  private async serve(signal: AbortSignal, heartbeat: LeaseHeartbeat): Promise<void> {
+    const { queue, pacer, states, sleeper, config, workerId, clock, logger } = this.deps;
 
-    while (!signal.aborted) {
+    while (!signal.aborted && !heartbeat.isLost()) {
       this.tick();
       const now = clock.now();
-      if (now.getTime() - renewedAt.getTime() >= ttlMs / 3) {
-        if (!(await leases.renew(this.mailbox.code, workerId, ttlMs, now))) {
-          logger.warn({ mailbox: this.mailbox.code }, 'mailbox lease lost');
-
-          return;
-        }
-        renewedAt = now;
-      }
 
       const state = await states.get(this.mailbox.code);
       if (state.status === 'SUSPENDED') {
-        await sleeper.sleep(config.suspendedRecheckSeconds * 1000, signal);
+        await this.pulse.sleep(sleeper, config.suspendedRecheckSeconds * 1000, signal);
         continue;
       }
 
       if (!(await queue.hasPending(this.mailbox.code, now))) {
         // Nothing to send: do not hold an idle connection open on the provider.
         await this.closeSmtp();
-        await sleeper.sleep(config.pollIntervalMs, signal);
+        await this.pulse.sleep(sleeper, config.pollIntervalMs, signal);
         continue;
       }
 
@@ -123,20 +150,30 @@ export class MailboxSender {
           { mailbox: this.mailbox.code, resumeInMs: wait },
           'daily quota reached; pausing the mailbox',
         );
-        await sleeper.sleep(Math.min(wait, config.suspendedRecheckSeconds * 1000), signal);
+        await this.pulse.sleep(sleeper, Math.min(wait, config.suspendedRecheckSeconds * 1000), signal);
         continue;
+      }
+      if (heartbeat.isLost()) {
+        // The pace wait may have outlived the lease: never claim without it.
+        return;
       }
 
       const message = await queue.claimNext(this.mailbox.code, workerId, clock.now());
       if (message === null) {
         continue;
       }
-      await this.sendOne(message);
+      this.setInFlight(message._id);
+      try {
+        await this.sendOne(message);
+      } finally {
+        this.setInFlight(undefined);
+      }
     }
   }
 
   private async sendOne(message: MessageDocument): Promise<void> {
     const { queue, eml, clock, logger, states } = this.deps;
+    const startedAt = message.sendingStartedAt ?? clock.now();
     const log = logger.logger.child({
       mailbox: this.mailbox.code,
       messageId: message._id,
@@ -144,17 +181,14 @@ export class MailboxSender {
       attempt: message.attempts,
     });
 
-    let built;
+    let built: BuiltEml;
     try {
       built = await eml.build(message, this.mailbox);
     } catch (error: unknown) {
       const now = clock.now();
       log.error({ err: error }, 'message could not be built');
-      await this.scheduleRetryOrFail(message, {
-        code: 'EML_BUILD_FAILED',
-        detail: errorText(error),
-        at: now,
-      });
+      const failure = { code: 'EML_BUILD_FAILED', detail: errorText(error), at: now };
+      await this.scheduleRetryOrFail(message, failure, { startedAt, endedAt: now, ...failure });
 
       return;
     }
@@ -170,36 +204,44 @@ export class MailboxSender {
       response = result.response;
     } catch (error: unknown) {
       const now = clock.now();
+      await this.closeSmtp();
       if (!(error instanceof SmtpFailure)) {
         log.error({ err: error }, 'unexpected send failure');
-        await this.closeSmtp();
-        await this.scheduleRetryOrFail(message, { code: 'SEND_FAILED', detail: errorText(error), at: now });
+        const failure = { code: 'SEND_FAILED', detail: errorText(error), at: now };
+        await this.scheduleRetryOrFail(message, failure, { startedAt, endedAt: now, ...failure });
 
         return;
       }
       const outcome = classifySmtpFailure(error);
-      const record = { code: outcome.code, detail: outcome.detail, at: now };
-      await this.closeSmtp();
+      const record: MessageError = { code: outcome.code, detail: outcome.detail, at: now };
+      const smtpCode = error.responseCode ?? replyCode(error.response);
+      const report: AttemptReport = {
+        startedAt,
+        endedAt: now,
+        code: outcome.code,
+        detail: outcome.detail,
+        ...(smtpCode === undefined ? {} : { smtpCode }),
+      };
       switch (outcome.kind) {
         case 'suspend':
           log.error({ smtp: error.response }, 'login refused: suspending the mailbox');
-          await states.set(this.mailbox.code, 'SUSPENDED', `SMTP login refused: ${outcome.detail}`, now);
-          await queue.releaseToPending(message._id, now);
+          await states.suspend(this.mailbox.code, 'SMTP_AUTH_REFUSED', outcome.detail, now);
+          await queue.releaseToPending(message._id, now, report);
 
           return;
         case 'stuck':
           log.error({ smtp: error.response, command: error.command }, 'outcome unknown: message is STUCK');
-          await queue.markStuck(message._id, record);
+          await queue.markStuck(message._id, record, report, emlRecord(built));
 
           return;
         case 'fail':
           log.warn({ smtp: error.response, command: error.command }, 'message refused by the server');
-          await queue.markFailed(message._id, record);
+          await queue.markFailed(message._id, record, report);
 
           return;
         case 'retry':
           log.warn({ smtp: error.response, command: error.command, code: error.code }, 'transient failure');
-          await this.scheduleRetryOrFail(message, record);
+          await this.scheduleRetryOrFail(message, record, report);
 
           return;
       }
@@ -207,13 +249,17 @@ export class MailboxSender {
 
     const sentAt = clock.now();
     const archiver = this.mailbox.imap === null ? undefined : this.sentArchiver();
-    await queue.markSent(message._id, {
-      sentAt,
-      messageIdHeader: built.messageIdHeader,
-      smtpResponse: response,
-      emlPath: built.relativePath,
-      sentCopy: archiver === undefined ? 'DISABLED' : 'PENDING',
-    });
+    const smtpCode = replyCode(response);
+    await queue.markSent(
+      message._id,
+      {
+        ...emlRecord(built),
+        sentAt,
+        smtpResponse: response,
+        sentCopy: archiver === undefined ? 'DISABLED' : 'PENDING',
+      },
+      { startedAt, endedAt: sentAt, detail: response, ...(smtpCode === undefined ? {} : { smtpCode }) },
+    );
     log.info({ smtp: response }, 'message sent');
 
     if (archiver !== undefined) {
@@ -229,7 +275,8 @@ export class MailboxSender {
 
   private async scheduleRetryOrFail(
     message: MessageDocument,
-    error: { code: string; detail: string; at: Date },
+    error: MessageError,
+    report: AttemptReport,
   ): Promise<void> {
     const { queue, config, logger } = this.deps;
     if (message.attempts >= config.maxAttempts) {
@@ -237,13 +284,14 @@ export class MailboxSender {
         { mailbox: this.mailbox.code, messageId: message._id, attempts: message.attempts },
         'no attempts left: message FAILED',
       );
-      await queue.markFailed(message._id, { ...error, code: `${error.code}_MAX_ATTEMPTS` });
+      const code = `${error.code}_MAX_ATTEMPTS`;
+      await queue.markFailed(message._id, { ...error, code }, { ...report, code });
 
       return;
     }
     const backoff = config.retryBackoffSeconds;
     const seconds = backoff[Math.min(message.attempts - 1, backoff.length - 1)] ?? 60;
-    await queue.markRetry(message._id, new Date(error.at.getTime() + seconds * 1000), error);
+    await queue.markRetry(message._id, new Date(error.at.getTime() + seconds * 1000), error, report);
   }
 
   private smtpClient(): SmtpClient {
@@ -275,10 +323,6 @@ export class MailboxSender {
   }
 
   private tick(): void {
-    this.lastTickAt = this.deps.clock.now();
+    this.pulse.beat();
   }
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

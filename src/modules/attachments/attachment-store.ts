@@ -1,12 +1,12 @@
-import { createHash, type Hash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { Transform, type Readable, type TransformCallback } from 'node:stream';
+import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { Inject, Injectable } from '@nestjs/common';
 
+import { HashingTap } from '../../common/fs/hashing-tap';
 import type { BatchId, TenantId } from '../../common/types/branded';
 import { ENV } from '../../config/config.module';
 import type { Env } from '../../config/env.schema';
@@ -28,29 +28,6 @@ export interface StagingArea {
 }
 
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
-/** Sits in the pipeline between the request and the file: hashes, counts and keeps the first bytes of what is written. */
-class HashingTap extends Transform {
-  public size = 0;
-  private readonly hash: Hash = createHash('sha256');
-  private readonly headChunks: Buffer[] = [];
-  private headLength = 0;
-
-  public override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
-    this.size += chunk.length;
-    this.hash.update(chunk);
-    if (this.headLength < HEAD_BYTES) {
-      const slice = chunk.subarray(0, HEAD_BYTES - this.headLength);
-      this.headChunks.push(slice);
-      this.headLength += slice.length;
-    }
-    callback(null, chunk);
-  }
-
-  public digest(): { sha256: string; head: Buffer } {
-    return { sha256: this.hash.digest('hex'), head: Buffer.concat(this.headChunks) };
-  }
-}
 
 /**
  * Files arrive with the request and are written to disk as they stream in:
@@ -88,7 +65,7 @@ export class AttachmentStore {
       throw new Error(`part name "${partName}" rejected before reaching the store`);
     }
     const path = join(area.dir, partName);
-    const tap = new HashingTap();
+    const tap = new HashingTap(HEAD_BYTES);
     await pipeline(stream, tap, createWriteStream(path, { flags: 'wx' }));
     const { sha256, head } = tap.digest();
 

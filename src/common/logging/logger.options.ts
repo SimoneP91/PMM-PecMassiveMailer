@@ -37,7 +37,8 @@ export function buildLoggerParams(env: Env): Params {
     exclude: [{ path: 'health/(.*)', method: RequestMethod.GET }],
     pinoHttp: {
       level: env.LOG_LEVEL,
-      ...(env.LOG_PRETTY
+      // Never in production: pino-pretty is a dev dependency and is not in the image.
+      ...(env.LOG_PRETTY && env.NODE_ENV !== 'production'
         ? {
             transport: {
               target: 'pino-pretty',

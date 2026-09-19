@@ -4,6 +4,61 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-19
+
+Stage 5: receipts, settlement and webhooks.
+
+### Added
+
+- Receipt reader in the worker: one per mailbox with IMAP, under its own lease; reads the receipts folder read-only (EXAMINE, BODY.PEEK) from a UID cursor (`imap_cursors`, reset on UIDVALIDITY change); config `receipts` (`pollIntervalSeconds`, `maxPerPoll`, `settleAfterHours`) and `mailboxes[].imap.receiptsFolder`.
+- Receipts trusted only by the top-level `X-Ricevuta` header (transport envelopes ignored), matched by `X-Riferimento-Message-ID` or the daticert `msgid`, stored once with the original mail and `daticert.xml` and their SHA-256.
+- Message states ACCEPTED, DELIVERED, NOT_DELIVERED (with `deliveryError`), forward-only; an acceptance also resolves a STUCK, RETRY_SCHEDULED or FAILED message.
+- Settlement: per message `PENDING` → `SETTLED` or `TIMED_OUT` after 30 h; batch `SETTLED` with `settledAt` and `settlement {pending, settled, timedOut}`; a job reconciles batches a crash left open.
+- Webhooks `batch.sent`, `batch.settled`, `mailbox.suspended` through a transactional outbox (`webhook_events`): HMAC-SHA256 signature over timestamp and body, stable event id, retries with backoff for 24 h then FAILED; config `webhooks`, `tenants[].webhook.allowPrivateNetwork`.
+- Anti-SSRF for webhooks: HTTPS only, no redirects, private and reserved addresses refused after DNS resolution.
+- `GET /v1/messages/{id}/receipts`, `GET /v1/receipts/{id}/eml`, `GET /v1/receipts/{id}/daticert` (with `Repr-Digest`); message detail with `receipts[]`, `deliveryError`, `settlement` and the receipt timeline; mailbox list with `suspendedAt` and `suspensionCause`.
+- CLI `webhook list [--status]` and `webhook retry <eventId>`.
+- First integration test: the IMAP receipt reader against Greenmail (`npm run test:integration`).
+
+### Changed
+
+- `mailparser` is a runtime dependency (it parses the receipts).
+- A mailbox suspension records its cause (SMTP_AUTH_REFUSED, IMAP_AUTH_REFUSED, OPERATOR) and emits `mailbox.suspended` once per suspension.
+- FAILED and CANCELLED messages are settled at once, so a batch with failures can reach SETTLED.
+- Worker liveness: a loop sleeping on purpose counts as alive until its planned wake-up.
+
+### Fixed
+
+- The worker liveness probe would have reported a stalled worker, and got the container restarted, whenever a loop's sleep (a receipt poll interval, a suspended-mailbox recheck) was 5 minutes or longer.
+
+## [0.4.0] - 2026-09-19
+
+Stage 4: read side and cancellation.
+
+### Added
+
+- `GET /v1/batches` (newest first; filters status, reference, subTenant, mailbox, created range), `GET /v1/batches/{id}` (state, counters per status, rejected rows), `GET /v1/batches/{id}/summary?groupBy=subTenant`, `GET /v1/batches/{id}/messages` (the client's row order), `POST /v1/batches/{id}/cancel` (idempotent; PENDING and RETRY_SCHEDULED only).
+- `GET /v1/messages` (search across batches; filters status, ref, to case-insensitive, subject contains, subTenant, batchId, created range), `GET /v1/messages/{id}` (every attempt with SMTP code and reply, operator actions, timeline, attachment and EML digests), `/rendered`, `/eml` (`message/rfc822` with `Repr-Digest`, RFC 9530).
+- Keyset pagination with opaque cursors bound to their list (`400 INVALID_CURSOR` otherwise); page size 1-500, default 100.
+- `db sync-indexes [--dry-run]` admin command.
+- Tenant isolation e2e suite: every id-taking endpoint called as the wrong tenant answers like a missing id.
+- Messages store `position`, `toLower`, `heartbeatAt`, `emlSha256`/`emlSize`, `attemptLog`, `operatorLog`, `cancelledAt`; batches `messageCount`, `cancelRequestedAt`, `cancelledAt`.
+
+### Changed
+
+- Batch counters are derived from the messages instead of stored; a batch is closed (SENT, or CANCELLED when nothing left) from the actual message states.
+- Messages leave in the client's row order.
+
+### Fixed (review of stage 3)
+
+- The mailbox lease is renewed by a heartbeat timer: a long paced wait or a large upload can no longer let a second worker send through the same mailbox.
+- Stale recovery looks at the in-flight message's heartbeat: a slow but live send is no longer marked STUCK.
+- Stored batch counters could drift after a crash between two writes and leave a batch SENDING forever (replaced by derived counters).
+- Production never created indexes (autoIndex off, the referenced migrate command did not exist): the unique `dedupKey` and `{batchId, ref}` guarantees were missing. Now `db sync-indexes`.
+- The queue sort was not covered by an index (in-memory sort on every claim).
+- Resolving a STUCK message overwrote `lastError`; decisions now go to `operatorLog`.
+- The CLI forced pretty logs, which need a dev dependency absent from the image: every database command failed silently inside the container. Pretty logs are also ignored in production for the API and the worker, and CLI boot errors are reported.
+
 ## [0.3.0] - 2026-09-19
 
 Stage 3: sending worker.

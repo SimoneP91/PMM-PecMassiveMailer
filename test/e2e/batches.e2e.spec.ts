@@ -113,7 +113,7 @@ describe('POST /v1/batches - accepted', () => {
       .db()
       .collection('batches')
       .findOne({ _id: body.batchId as never });
-    expect(batch).toMatchObject({ tenantId: 't_serfin', status: 'QUEUED', counts: { total: 2, pending: 2 } });
+    expect(batch).toMatchObject({ tenantId: 't_serfin', status: 'QUEUED', messageCount: 2 });
 
     const messages = await db
       .db()

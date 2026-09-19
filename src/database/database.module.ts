@@ -22,8 +22,8 @@ import type { Env } from '../config/env.schema';
         serverSelectionTimeoutMS: 5_000,
         writeConcern: { w: 'majority', journal: true },
         readPreference: 'primary',
-        // Indexes are declared on the schemas; in production they are created
-        // by the migrate command, not by the first process that happens to boot.
+        // Indexes are declared on the schemas; in production they are built by
+        // `db sync-indexes` (once per release), not by the first process that boots.
         autoIndex: env.NODE_ENV !== 'production',
         retryAttempts: 5,
         retryDelay: 2_000,

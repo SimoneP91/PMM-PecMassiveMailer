@@ -6,6 +6,8 @@ import { MailboxesModule } from '../mailboxes/mailboxes.module';
 import { RecipientsModule } from '../recipients/recipients.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { BatchIntakeService } from './batch-intake.service';
+import { BatchLifecycleModule } from './batch-lifecycle.module';
+import { BatchQueryService } from './batch-query.service';
 import { BatchRepository } from './batch.repository';
 import { BatchesController } from './batches.controller';
 import { IdempotencyService } from './idempotency.service';
@@ -24,9 +26,11 @@ import { MESSAGE_MODEL, messageSchema } from './schemas/message.schema';
     MailboxesModule,
     RecipientsModule,
     AttachmentsModule,
+    BatchLifecycleModule,
   ],
   controllers: [BatchesController],
-  providers: [BatchIntakeService, BatchRepository, IdempotencyService],
-  exports: [BatchRepository],
+  providers: [BatchIntakeService, BatchQueryService, BatchRepository, IdempotencyService],
+  // The models go with the module: the messages module reads the same collections.
+  exports: [BatchRepository, MongooseModule],
 })
 export class BatchesModule {}

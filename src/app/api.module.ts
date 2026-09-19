@@ -13,6 +13,7 @@ import { AuthModule } from '../modules/auth/auth.module';
 import { BatchesModule } from '../modules/batches/batches.module';
 import { HealthModule } from '../modules/health/health.module';
 import { MailboxesModule } from '../modules/mailboxes/mailboxes.module';
+import { MessagesModule } from '../modules/messages/messages.module';
 import { TenantsModule } from '../modules/tenants/tenants.module';
 
 @Module({})
@@ -27,6 +28,7 @@ export class ApiModule {
         TenantsModule,
         MailboxesModule,
         BatchesModule,
+        MessagesModule,
         AuthModule,
         HealthModule,
       ],

@@ -19,6 +19,11 @@ export const mailboxSummarySchema = z.object({
     .describe(
       'SUSPENDED = the provider refused the credentials; nothing is sent until an operator reactivates it',
     ),
+  suspendedAt: z.iso.datetime().optional(),
+  suspensionCause: z
+    .enum(['SMTP_AUTH_REFUSED', 'IMAP_AUTH_REFUSED', 'OPERATOR'])
+    .optional()
+    .describe('Why it is suspended; an operator reactivates it once the password is fixed'),
   archivesSentCopy: z
     .boolean()
     .describe('Whether a copy of each sent message is filed in the Sent folder over IMAP'),

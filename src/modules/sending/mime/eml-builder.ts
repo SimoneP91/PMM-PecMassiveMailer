@@ -1,11 +1,12 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 import { Inject, Injectable } from '@nestjs/common';
 import MailComposer from 'nodemailer/lib/mail-composer';
 
+import { HashingTap } from '../../../common/fs/hashing-tap';
 import { CLOCK, type Clock } from '../../../common/time/clock';
 import type { ResolvedMailbox } from '../../../config/config.loader';
 import { AttachmentStore } from '../../attachments/attachment-store';
@@ -18,6 +19,9 @@ export interface BuiltEml {
   readonly relativePath: string;
   readonly messageIdHeader: string;
   readonly date: Date;
+  /** Digest and size of the file, i.e. of the bytes that will be transmitted. */
+  readonly sha256: string;
+  readonly size: number;
 }
 
 /**
@@ -78,15 +82,16 @@ export class EmlBuilder {
       ],
     });
 
-    await pipeline(composer.compile().createReadStream(), createWriteStream(path, { flags: 'w' }));
+    const tap = new HashingTap();
+    await pipeline(composer.compile().createReadStream(), tap, createWriteStream(path, { flags: 'w' }));
 
-    return { path, relativePath: this.store.relative(path), messageIdHeader, date };
-  }
-
-  public emlPathFor(message: Pick<MessageDocument, '_id' | 'tenantId' | 'batchId'>): string {
-    return join(
-      this.store.absolute(`batches/${message.tenantId}/${message.batchId}/eml`),
-      `${message._id}.eml`,
-    );
+    return {
+      path,
+      relativePath: this.store.relative(path),
+      messageIdHeader,
+      date,
+      sha256: tap.digest().sha256,
+      size: tap.size,
+    };
   }
 }

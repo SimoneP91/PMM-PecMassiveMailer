@@ -594,9 +594,11 @@ export class BatchIntakeService {
       tenantId: tenant.id,
       batchId,
       mailbox: mailbox.code,
+      position: row.index,
       ref: row.ref,
       ...(row.subTenant === undefined ? {} : { subTenant: row.subTenant }),
       to: row.to,
+      toLower: row.to.toLowerCase(),
       ...(row.toName === undefined ? {} : { toName: row.toName }),
       ...(row.dedupKey === undefined ? {} : { dedupKey: row.dedupKey }),
       subject: row.subject,
@@ -617,6 +619,8 @@ export class BatchIntakeService {
       attempts: 0,
       nextAttemptAt: now,
       sentCopy: mailbox.imap === null ? 'DISABLED' : 'PENDING',
+      attemptLog: [],
+      operatorLog: [],
     }));
 
     const batchDoc: Omit<BatchDocument, 'createdAt' | 'updatedAt'> = {
@@ -630,15 +634,7 @@ export class BatchIntakeService {
       template: { subject: template.subject, html: template.html, inlineImages: template.inlineImages },
       options: { atomic: batch.options.atomic, unverifiedRecipients: batch.options.unverifiedRecipients },
       parts: storedParts,
-      counts: {
-        total: accepted.length,
-        pending: accepted.length,
-        sent: 0,
-        delivered: 0,
-        failed: 0,
-        stuck: 0,
-        cancelled: 0,
-      },
+      messageCount: accepted.length,
       rejectedMessages: rejected.map(({ ref, code, detail }) => ({ ref, code, detail })),
       warnings: [...warnings],
       idempotencyKey,

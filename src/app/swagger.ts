@@ -20,7 +20,9 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setDescription(DESCRIPTION)
     .setVersion(APP_VERSION)
     .addBearerAuth({ type: 'http', scheme: 'bearer', description: 'Tenant API key (pm_...)' }, 'apiKey')
-    .addTag('batches', 'Submit and follow batches of PEC messages')
+    .addTag('batches', 'Submit, follow and cancel batches of PEC messages')
+    .addTag('messages', 'Find a message, follow it, download what was sent')
+    .addTag('receipts', 'The PEC receipts, as the providers delivered them')
     .addTag('mailboxes', 'The mailboxes a tenant may send from')
     .addTag('health', 'Probes for the orchestrator')
     .build();

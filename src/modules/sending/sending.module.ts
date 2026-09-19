@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { AttachmentsModule } from '../attachments/attachments.module';
+import { BatchLifecycleModule } from '../batches/batch-lifecycle.module';
 import { BATCH_MODEL, batchSchema } from '../batches/schemas/batch.schema';
 import { MESSAGE_MODEL, messageSchema } from '../batches/schemas/message.schema';
 import { MailboxesModule } from '../mailboxes/mailboxes.module';
@@ -27,6 +28,7 @@ import { StuckRecovery } from './stuck-recovery';
     ]),
     MailboxesModule,
     AttachmentsModule,
+    BatchLifecycleModule,
   ],
   providers: [
     MessageQueueRepository,

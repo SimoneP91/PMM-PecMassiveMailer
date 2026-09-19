@@ -20,10 +20,12 @@ import {
   type PecmailerConfigFile,
   type ProviderName,
   type RecipientsConfig,
+  type ReceiptsConfig,
   type SendingConfig,
   type TenantConfig,
   type TenantLimits,
   type TransportSecurity,
+  type WebhooksConfig,
 } from './pecmailer-config.schema';
 
 /**
@@ -45,6 +47,7 @@ export interface ResolvedApiKey {
 export interface ResolvedWebhook {
   readonly url: string;
   readonly secret: Secret;
+  readonly allowPrivateNetwork: boolean;
 }
 
 export interface ResolvedTenant {
@@ -72,6 +75,7 @@ export interface ResolvedImap {
   readonly username: string;
   readonly password: Secret;
   readonly sentFolder: string;
+  readonly receiptsFolder: string;
 }
 
 export interface ResolvedMailbox {
@@ -90,6 +94,8 @@ export interface ResolvedConfig {
   readonly mailboxes: readonly ResolvedMailbox[];
   readonly recipients: RecipientsConfig;
   readonly sending: SendingConfig;
+  readonly receipts: ReceiptsConfig;
+  readonly webhooks: WebhooksConfig;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -132,6 +138,7 @@ function resolveTenant(tenant: TenantConfig, source: EnvSource): ResolvedTenant 
         : {
             url: tenant.webhook.url,
             secret: requireSecret(source, tenant.webhook.secretEnv, `tenant "${tenant.id}" webhook secret`),
+            allowPrivateNetwork: tenant.webhook.allowPrivateNetwork,
           },
     limits: tenant.limits,
   };
@@ -172,6 +179,7 @@ function resolveMailbox(mailbox: MailboxConfig, env: Env, source: EnvSource): Re
       username: mailbox.imap.username ?? mailbox.smtp.username,
       password,
       sentFolder,
+      receiptsFolder: mailbox.imap.receiptsFolder,
     };
   }
 
@@ -200,6 +208,8 @@ export function resolveConfig(file: PecmailerConfigFile, env: Env, source: EnvSo
     mailboxes: file.mailboxes.map((mailbox) => resolveMailbox(mailbox, env, source)),
     recipients: file.recipients,
     sending: file.sending,
+    receipts: file.receipts,
+    webhooks: file.webhooks,
   });
 }
 

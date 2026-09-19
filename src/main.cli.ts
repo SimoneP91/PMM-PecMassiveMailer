@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 
 import { runApiKeyGenerate } from './cli/api-key.command';
 import { runConfigCheck } from './cli/config-check.command';
+import { runDbSyncIndexes } from './cli/db.command';
 import {
   runMailboxActivate,
   runMailboxList,
@@ -11,12 +12,14 @@ import {
   runMailboxSuspend,
 } from './cli/mailbox.command';
 import { runMessageResolve, runMessageStuck } from './cli/message.command';
+import { runWebhookList, runWebhookRetry } from './cli/webhook.command';
 import { withApp } from './cli/with-app';
 
 const USAGE = `pecmailer admin commands
 
   api-key generate [--label <text>]     generate an API key: prints it once and the hash for the config file
   config check                          load environment and configuration, report what was resolved (no secrets)
+  db sync-indexes [--dry-run]           create/drop MongoDB indexes to match the code; run once per release
 
   mailbox list                          every mailbox with its state and which worker holds it
   mailbox probe <code>                  log in over SMTP and IMAP with the configured credentials, send nothing
@@ -25,6 +28,9 @@ const USAGE = `pecmailer admin commands
 
   message stuck                         messages whose outcome is unknown and need a decision
   message resolve <id> --as <outcome>   sent | requeue | failed, after checking the provider's Sent folder
+
+  webhook list [--status <status>]      events not delivered yet (or: PENDING, DELIVERING, DELIVERED, FAILED)
+  webhook retry <eventId>               queue a FAILED event again for a new retry window
   help
 
 Exit codes: 0 ok, 1 error.`;
@@ -37,6 +43,8 @@ async function main(argv: readonly string[]): Promise<number> {
       label: { type: 'string' },
       reason: { type: 'string' },
       as: { type: 'string' },
+      status: { type: 'string' },
+      'dry-run': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -53,6 +61,9 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   if (group === 'config' && action === 'check') {
     return runConfigCheck(process.env);
+  }
+  if (group === 'db' && action === 'sync-indexes') {
+    return withApp(process.env, (app) => runDbSyncIndexes(app, values['dry-run'] === true));
   }
   if (group === 'mailbox') {
     if (action === 'list') {
@@ -74,6 +85,15 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     if (argument !== undefined && action === 'resolve') {
       return withApp(process.env, (app) => runMessageResolve(app, argument, values.as));
+    }
+  }
+
+  if (group === 'webhook') {
+    if (action === 'list') {
+      return withApp(process.env, (app) => runWebhookList(app, values.status));
+    }
+    if (argument !== undefined && action === 'retry') {
+      return withApp(process.env, (app) => runWebhookRetry(app, argument));
     }
   }
 

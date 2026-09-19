@@ -9,6 +9,7 @@ import { asApiKeyId, asTenantId } from '../../../src/common/types/branded';
 import type { ResolvedConfig } from '../../../src/config/config.loader';
 import { ApiKeyGuard, extractBearerToken } from '../../../src/modules/auth/api-key.guard';
 import { TenantRegistry } from '../../../src/modules/tenants/tenant.registry';
+import { defaultSections } from '../../helpers/config-sections';
 
 const serfinKey = generateApiKey();
 const otherKey = generateApiKey();
@@ -33,15 +34,7 @@ const config: ResolvedConfig = {
     },
   ],
   mailboxes: [],
-  recipients: { pecDomains: [], pecMxSuffixes: [], nonPecDomains: [], nonPecMxSuffixes: [] },
-  sending: {
-    maxAttempts: 5,
-    retryBackoffSeconds: [60],
-    staleSendingSeconds: 600,
-    pollIntervalMs: 5000,
-    leaseTtlSeconds: 60,
-    suspendedRecheckSeconds: 60,
-  },
+  ...defaultSections(),
 };
 
 interface FakeRequest {

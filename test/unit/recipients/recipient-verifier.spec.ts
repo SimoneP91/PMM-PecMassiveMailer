@@ -5,6 +5,7 @@ import type { ResolvedConfig } from '../../../src/config/config.loader';
 import { RecipientVerifier } from '../../../src/modules/recipients/recipient-verifier';
 import { containing } from '../../helpers/matchers';
 import { FakeMxResolver } from '../../helpers/fake-mx';
+import { defaultSections } from '../../helpers/config-sections';
 
 class FakeClock implements Clock {
   public constructor(public current = new Date('2026-09-19T10:00:00Z')) {}
@@ -21,19 +22,12 @@ class FakeClock implements Clock {
 const config: ResolvedConfig = {
   tenants: [],
   mailboxes: [],
+  ...defaultSections(),
   recipients: {
     pecDomains: ['pec.custom.example'],
     pecMxSuffixes: ['mx.provider.example'],
     nonPecDomains: [],
     nonPecMxSuffixes: [],
-  },
-  sending: {
-    maxAttempts: 5,
-    retryBackoffSeconds: [60],
-    staleSendingSeconds: 600,
-    pollIntervalMs: 5000,
-    leaseTtlSeconds: 60,
-    suspendedRecheckSeconds: 60,
   },
 };
 

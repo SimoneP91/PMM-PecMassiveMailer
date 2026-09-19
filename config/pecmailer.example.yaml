@@ -17,7 +17,9 @@ tenants:
         sha256: 0000000000000000000000000000000000000000000000000000000000000000
     webhook:
       url: https://crm.serfin.example/pecmailer/events
-      secretEnv: WEBHOOK_SERFIN_SECRET
+      secretEnv: WEBHOOK_SERFIN_SECRET # HMAC-SHA256 signing secret: a long random value (openssl rand -hex 32)
+      # allowPrivateNetwork: false  # true only for a receiver inside the VPN (10.x, 192.168.x, ...);
+      #                             # by default private, loopback and cloud-metadata addresses are refused
     limits:
       maxMessagesPerBatch: 2500
       maxRequestBytes: 52428800 # 50 MiB per call
@@ -35,6 +37,7 @@ mailboxes:
       # host, port and security come from the provider preset; override here if needed
     imap:
       sentFolder: INBOX.Inviata # what the preset says for Aruba; providers differ
+      receiptsFolder: INBOX # where the provider drops the receipts; read-only, never modified
     limits:
       perMinute: 60
       perDay: 0 # 0 = no daily quota
@@ -58,3 +61,16 @@ sending:
   pollIntervalMs: 5000 # how often an idle mailbox loop looks for work
   leaseTtlSeconds: 60 # a worker owns a mailbox for this long between renewals
   suspendedRecheckSeconds: 60 # how often a suspended mailbox is re-checked for reactivation
+
+# Optional. How the worker reads PEC receipts; every value shown is the default.
+receipts:
+  pollIntervalSeconds: 60 # how often each mailbox's receipts folder is read
+  maxPerPoll: 200 # mails read per pass at most; the rest on the next pass
+  settleAfterHours: 30 # a message without a final receipt after this long is TIMED_OUT
+
+# Optional. How the worker delivers webhooks; every value shown is the default.
+webhooks:
+  timeoutSeconds: 10 # per HTTP attempt
+  backoffSeconds: [30, 120, 600, 1800, 3600, 7200] # wait before attempt 2, 3, ...; the last value repeats
+  retryForHours: 24 # after this, an undelivered event is FAILED (npm run cli -- webhook retry <id>)
+  pollIntervalMs: 2000 # how often an idle dispatcher looks for due events

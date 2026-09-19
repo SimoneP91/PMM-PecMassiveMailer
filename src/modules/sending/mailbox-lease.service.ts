@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
-import type { MailboxCode } from '../../common/types/branded';
 import { MAILBOX_LEASE_MODEL, type MailboxLeaseDocument } from './schemas/mailbox-lease.schema';
 
 function isDuplicateKeyError(error: unknown): boolean {
@@ -18,11 +17,11 @@ export class MailboxLeaseService {
    * already holds it. One atomic upsert: a concurrent taker hits the unique
    * _id and loses.
    */
-  public async tryAcquire(code: MailboxCode, owner: string, ttlMs: number, now: Date): Promise<boolean> {
+  public async tryAcquire(key: string, owner: string, ttlMs: number, now: Date): Promise<boolean> {
     const expiresAt = new Date(now.getTime() + ttlMs);
     try {
       await this.model.updateOne(
-        { _id: code, $or: [{ owner }, { expiresAt: { $lte: now } }] },
+        { _id: key, $or: [{ owner }, { expiresAt: { $lte: now } }] },
         { $set: { owner, expiresAt }, $setOnInsert: { acquiredAt: now } },
         { upsert: true },
       );
@@ -37,20 +36,20 @@ export class MailboxLeaseService {
   }
 
   /** false = the lease is no longer ours (expired and taken): stop sending at once. */
-  public async renew(code: MailboxCode, owner: string, ttlMs: number, now: Date): Promise<boolean> {
+  public async renew(key: string, owner: string, ttlMs: number, now: Date): Promise<boolean> {
     const result = await this.model.updateOne(
-      { _id: code, owner },
+      { _id: key, owner },
       { $set: { expiresAt: new Date(now.getTime() + ttlMs) } },
     );
 
     return result.matchedCount === 1;
   }
 
-  public async release(code: MailboxCode, owner: string): Promise<void> {
-    await this.model.deleteOne({ _id: code, owner });
+  public async release(key: string, owner: string): Promise<void> {
+    await this.model.deleteOne({ _id: key, owner });
   }
 
-  public async holder(code: MailboxCode): Promise<MailboxLeaseDocument | null> {
-    return this.model.findById(code).lean();
+  public async holder(key: string): Promise<MailboxLeaseDocument | null> {
+    return this.model.findById(key).lean();
   }
 }

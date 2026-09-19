@@ -1,4 +1,4 @@
-import { Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
+import { Controller, Get, HttpCode, Param, Post, Query, Req, Res } from '@nestjs/common';
 import {
   ApiAcceptedResponse,
   ApiBadRequestResponse,
@@ -9,7 +9,9 @@ import {
   ApiExtraModels,
   ApiForbiddenResponse,
   ApiHeader,
+  ApiNotFoundResponse,
   ApiOkResponse,
+  ApiParam,
   ApiOperation,
   ApiResponse,
   ApiTags,
@@ -23,6 +25,15 @@ import { ProblemDetailsDto } from '../../common/errors/problem-details.dto';
 import { CurrentTenant } from '../auth/current-tenant.decorator';
 import type { TenantContext } from '../auth/tenant-context';
 import { BatchIntakeService } from './batch-intake.service';
+import { BatchQueryService } from './batch-query.service';
+import {
+  BatchDetailDto,
+  BatchListDto,
+  BatchListQueryDto,
+  BatchSummaryDto,
+  BatchSummaryQueryDto,
+  CancelResultDto,
+} from './batch-read.dto';
 import { BatchRequestDto } from './batch-request.schema';
 import { BatchAcceptedDto, DryRunResultDto } from './batch-response.dto';
 
@@ -45,7 +56,10 @@ One call submits one batch: a template, a mailbox and N recipients, each with it
 @ApiExtraModels(BatchRequestDto)
 @Controller('v1/batches')
 export class BatchesController {
-  public constructor(private readonly intake: BatchIntakeService) {}
+  public constructor(
+    private readonly intake: BatchIntakeService,
+    private readonly query: BatchQueryService,
+  ) {}
 
   @Post()
   @HttpCode(202)
@@ -145,5 +159,77 @@ export class BatchesController {
     }
 
     return outcome.body;
+  }
+
+  @Get()
+  @ApiOperation({
+    summary: 'List your batches, newest first',
+    description:
+      'Filters combine with AND; a multi-value filter matches any of its values. Cursor pagination: ' +
+      'pass the nextCursor of a page as ?cursor= to get the next one; no nextCursor means the end.',
+  })
+  @ApiOkResponse({ type: BatchListDto })
+  @ApiBadRequestResponse({ type: ProblemDetailsDto, description: 'VALIDATION_FAILED, INVALID_CURSOR' })
+  public list(
+    @CurrentTenant() tenant: TenantContext,
+    @Query() query: BatchListQueryDto,
+  ): Promise<BatchListDto> {
+    return this.query.list(tenant.tenantId, query);
+  }
+
+  @Get(':batchId')
+  @ApiOperation({
+    summary: 'A batch: state, counters per message status, rejected rows',
+    description:
+      'Light enough to poll. counters always sum to total; stuck > 0 means an operator must decide ' +
+      'about some messages, and the batch stays SENDING until then.',
+  })
+  @ApiParam({ name: 'batchId', example: 'b_7Hk2mQ9aB3xK1LpQ' })
+  @ApiOkResponse({ type: BatchDetailDto })
+  @ApiNotFoundResponse({
+    type: ProblemDetailsDto,
+    description: 'BATCH_NOT_FOUND (also for a batch of another tenant)',
+  })
+  public get(
+    @CurrentTenant() tenant: TenantContext,
+    @Param('batchId') batchId: string,
+  ): Promise<BatchDetailDto> {
+    return this.query.get(tenant.tenantId, batchId);
+  }
+
+  @Get(':batchId/summary')
+  @ApiOperation({
+    summary: 'Counters of a batch grouped by subTenant',
+    description:
+      'One group per subTenant value found in the batch; messages without one form the null group.',
+  })
+  @ApiParam({ name: 'batchId' })
+  @ApiOkResponse({ type: BatchSummaryDto })
+  @ApiNotFoundResponse({ type: ProblemDetailsDto, description: 'BATCH_NOT_FOUND' })
+  public summary(
+    @CurrentTenant() tenant: TenantContext,
+    @Param('batchId') batchId: string,
+    @Query() _query: BatchSummaryQueryDto,
+  ): Promise<BatchSummaryDto> {
+    return this.query.summary(tenant.tenantId, batchId);
+  }
+
+  @Post(':batchId/cancel')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Cancel what has not left yet',
+    description:
+      'Messages PENDING or RETRY_SCHEDULED become CANCELLED. A message being sent at that moment is ' +
+      'finished, and anything already sent stays sent: a PEC that left cannot be recalled. ' +
+      'Idempotent: calling it again cancels nothing more and returns the same picture.',
+  })
+  @ApiParam({ name: 'batchId' })
+  @ApiOkResponse({ type: CancelResultDto })
+  @ApiNotFoundResponse({ type: ProblemDetailsDto, description: 'BATCH_NOT_FOUND' })
+  public cancel(
+    @CurrentTenant() tenant: TenantContext,
+    @Param('batchId') batchId: string,
+  ): Promise<CancelResultDto> {
+    return this.query.cancel(tenant.tenantId, batchId);
   }
 }

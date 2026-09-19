@@ -45,6 +45,12 @@ export const tenantLimitsSchema = z.strictObject({
 export const webhookConfigSchema = z.strictObject({
   url: httpsUrl,
   secretEnv: envVariableName,
+  /**
+   * Off by default: the host must resolve to a public address, so the
+   * service cannot be turned against the internal network (SSRF). An
+   * operator turns it on, knowingly, for a client that lives on the VPN.
+   */
+  allowPrivateNetwork: z.boolean().default(false),
 });
 
 export const tenantConfigSchema = z.strictObject({
@@ -83,6 +89,8 @@ export const mailboxConfigSchema = z.strictObject({
       security: transportSecuritySchema.optional(),
       username: z.string().min(1).optional(),
       sentFolder: z.string().min(1).optional(),
+      /** Where the provider delivers the receipts; read-only, nothing is moved or flagged. */
+      receiptsFolder: z.string().min(1).default('INBOX'),
       // false = do not file a copy in Sent and do not read receipts from this mailbox
       enabled: z.boolean().default(true),
     })
@@ -128,7 +136,11 @@ export const sendingConfigSchema = z.strictObject({
   maxAttempts: z.number().int().min(1).max(20).default(5),
   /** Delay before attempt 2, 3, ...; the last value repeats. */
   retryBackoffSeconds: z.array(z.number().int().min(1)).min(1).default([60, 300, 900, 3600, 14400]),
-  /** A message SENDING for longer than this is STUCK: the worker died mid-send and nobody knows if it left. */
+  /**
+   * A message SENDING whose worker gave no sign of life (heartbeat, every
+   * leaseTtlSeconds/3) for this long is STUCK: the worker died mid-send and
+   * nobody knows if it left.
+   */
   staleSendingSeconds: z.number().int().min(60).default(600),
   /** How often a mailbox loop looks for work when the queue is empty. */
   pollIntervalMs: z.number().int().min(100).default(5000),
@@ -138,12 +150,47 @@ export const sendingConfigSchema = z.strictObject({
   suspendedRecheckSeconds: z.number().int().min(5).default(60),
 });
 
+/** Reading the PEC receipts and closing batches. */
+export const receiptsConfigSchema = z.strictObject({
+  /** How often each mailbox's receipts folder is read. */
+  pollIntervalSeconds: z.number().int().min(1).default(60),
+  /** Messages fetched per read, at most; the next read continues. */
+  maxPerPoll: z.number().int().min(1).max(1000).default(200),
+  /**
+   * A sent message without a final receipt after this long is TIMED_OUT. The
+   * PEC rules give providers 24 hours to deliver or to notify the failure.
+   */
+  settleAfterHours: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 30)
+    .default(30),
+});
+
+/** Delivering webhook events to the tenants. */
+export const webhooksConfigSchema = z.strictObject({
+  timeoutSeconds: z.number().int().min(1).max(60).default(10),
+  /** Delay before attempt 2, 3, ...; the last value repeats. */
+  backoffSeconds: z.array(z.number().int().min(1)).min(1).default([30, 120, 600, 1800, 3600, 7200]),
+  /** An event not delivered within this long is FAILED (and listed by the webhook CLI). */
+  retryForHours: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 7)
+    .default(24),
+  pollIntervalMs: z.number().int().min(100).default(2000),
+});
+
 export const pecmailerConfigSchema = z
   .strictObject({
     tenants: z.array(tenantConfigSchema).min(1),
     mailboxes: z.array(mailboxConfigSchema),
     recipients: recipientsConfigSchema.prefault({}),
     sending: sendingConfigSchema.prefault({}),
+    receipts: receiptsConfigSchema.prefault({}),
+    webhooks: webhooksConfigSchema.prefault({}),
   })
   .superRefine((config, ctx) => {
     const tenantIds = new Set<string>();
@@ -231,5 +278,7 @@ export type TenantLimits = z.output<typeof tenantLimitsSchema>;
 export type MailboxConfig = z.output<typeof mailboxConfigSchema>;
 export type RecipientsConfig = z.output<typeof recipientsConfigSchema>;
 export type SendingConfig = z.output<typeof sendingConfigSchema>;
+export type ReceiptsConfig = z.output<typeof receiptsConfigSchema>;
+export type WebhooksConfig = z.output<typeof webhooksConfigSchema>;
 export type ProviderName = z.output<typeof providerNameSchema>;
 export type TransportSecurity = z.output<typeof transportSecuritySchema>;

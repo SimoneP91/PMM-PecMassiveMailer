@@ -15,16 +15,6 @@ export interface StoredPart {
   readonly path: string;
 }
 
-export interface BatchCounts {
-  readonly total: number;
-  readonly pending: number;
-  readonly sent: number;
-  readonly delivered: number;
-  readonly failed: number;
-  readonly stuck: number;
-  readonly cancelled: number;
-}
-
 export interface BatchDocument {
   readonly _id: BatchId;
   readonly tenantId: TenantId;
@@ -40,13 +30,23 @@ export interface BatchDocument {
   };
   readonly options: { readonly atomic: boolean; readonly unverifiedRecipients: 'reject' | 'send' };
   readonly parts: readonly StoredPart[];
-  readonly counts: BatchCounts;
+  /**
+   * Accepted rows. Per-status counters are not stored: they are counted from
+   * the messages when asked (see batch-counters.ts), so a crash between two
+   * writes can never leave them wrong.
+   */
+  readonly messageCount: number;
   readonly rejectedMessages: readonly RejectedMessage[];
   readonly warnings: readonly BatchWarning[];
   readonly idempotencyKey: string;
   readonly sendingStartedAt?: Date;
-  /** Every message left the queue (sent or failed) and none is stuck. */
+  /** Every message left the queue (sent, failed or cancelled) and none is stuck. */
   readonly sentAt?: Date;
+  /** Set by the first cancel request, whatever it found to cancel. */
+  readonly cancelRequestedAt?: Date;
+  readonly cancelledAt?: Date;
+  /** Every message has its final word (stage 5). */
+  readonly settledAt?: Date;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -82,15 +82,7 @@ export const batchSchema = new Schema<BatchDocument>(
       unverifiedRecipients: { type: String, required: true },
     },
     parts: { type: [storedPartSchema], required: true },
-    counts: {
-      total: { type: Number, required: true },
-      pending: { type: Number, required: true },
-      sent: { type: Number, required: true },
-      delivered: { type: Number, required: true },
-      failed: { type: Number, required: true },
-      stuck: { type: Number, required: true },
-      cancelled: { type: Number, required: true },
-    },
+    messageCount: { type: Number, required: true },
     rejectedMessages: {
       type: [new Schema({ ref: String, code: String, detail: String }, { _id: false })],
       required: true,
@@ -99,12 +91,15 @@ export const batchSchema = new Schema<BatchDocument>(
     idempotencyKey: { type: String, required: true },
     sendingStartedAt: { type: Date },
     sentAt: { type: Date },
+    cancelRequestedAt: { type: Date },
+    cancelledAt: { type: Date },
+    settledAt: { type: Date },
   },
   { collection: 'batches', timestamps: true, versionKey: false, minimize: false },
 );
 
-// Every read is tenant-scoped; these serve the list endpoints of stage 4.
-batchSchema.index({ tenantId: 1, createdAt: -1 });
-batchSchema.index({ tenantId: 1, reference: 1 }, { sparse: true });
-batchSchema.index({ tenantId: 1, subTenant: 1, createdAt: -1 }, { sparse: true });
-batchSchema.index({ tenantId: 1, status: 1 });
+// Every read is tenant-scoped: GET /v1/batches, newest first, by the filters it offers.
+batchSchema.index({ tenantId: 1, createdAt: -1, _id: -1 });
+batchSchema.index({ tenantId: 1, reference: 1, createdAt: -1 });
+batchSchema.index({ tenantId: 1, subTenant: 1, createdAt: -1 });
+batchSchema.index({ tenantId: 1, status: 1, createdAt: -1 });

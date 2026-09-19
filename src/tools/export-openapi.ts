@@ -11,6 +11,12 @@ import { ApiModule } from '../app/api.module';
 import { buildOpenApiDocument } from '../app/swagger';
 import type { ResolvedConfig } from '../config/config.loader';
 import { parseEnv } from '../config/env.schema';
+import {
+  receiptsConfigSchema,
+  recipientsConfigSchema,
+  sendingConfigSchema,
+  webhooksConfigSchema,
+} from '../config/pecmailer-config.schema';
 
 /**
  * Writes the OpenAPI document to a file: what a client integrator needs
@@ -33,15 +39,10 @@ async function main(): Promise<void> {
     const config: ResolvedConfig = {
       tenants: [],
       mailboxes: [],
-      recipients: { pecDomains: [], pecMxSuffixes: [], nonPecDomains: [], nonPecMxSuffixes: [] },
-      sending: {
-        maxAttempts: 5,
-        retryBackoffSeconds: [60],
-        staleSendingSeconds: 600,
-        pollIntervalMs: 5000,
-        leaseTtlSeconds: 60,
-        suspendedRecheckSeconds: 60,
-      },
+      recipients: recipientsConfigSchema.parse({}),
+      sending: sendingConfigSchema.parse({}),
+      receipts: receiptsConfigSchema.parse({}),
+      webhooks: webhooksConfigSchema.parse({}),
     };
 
     const app = await NestFactory.create<NestFastifyApplication>(
