@@ -6,15 +6,9 @@ Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messagg
 
 ## Stato
 
-È in corso la fase 6: il passaggio da un'API HTTP con database alle code. Le fasi da 1 a 5, cioè l'API HTTP con MongoDB, versione 0.5.1, restano nella storia di git.
+Versione 0.6.0: il passaggio da un'API HTTP con database alle code è completo ([ADR 0006](docs/it/adr/0006-queues-no-database.md)). Invio, copia in Inviata, esiti e ricevute funzionano da un capo all'altro, verificati su una casella Aruba reale. Le versioni fino alla 0.5.1, con API HTTP e MongoDB, restano nella storia di git.
 
-| Passo | Contenuto                                                                                                     | Stato    |
-| ----- | ------------------------------------------------------------------------------------------------------------- | -------- |
-| 1     | contratto dei messaggi: documento AsyncAPI e guide                                                            | fatto    |
-| 2     | pulizia, configurazione da variabili d'ambiente, collegamento a RabbitMQ e code, sonde, stack locale, comandi | fatto    |
-| 3     | invio: controlli, SMTP, copia in Inviata, ritmo, ritentativi, esiti, PEC riconsegnate                         | fatto    |
-| 4     | ricevute: lettura della casella, eventi delle ricevute                                                        | fatto    |
-| 5     | documentazione e collaudo su caselle reali                                                                    | prossimo |
+Prima della produzione: un collaudo su una casella Legalmail, il gestore usato in produzione, e le impostazioni di RabbitMQ di [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) applicate da chi gestisce il server.
 
 ## Tecnologie
 

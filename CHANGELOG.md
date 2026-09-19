@@ -4,7 +4,9 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
-Stage 6: from an HTTP API with a database to queues. In progress; released as 0.6.0 at its end.
+## [0.6.0] - 2026-09-19
+
+Stage 6: from an HTTP API with a database to queues. Breaking: the HTTP API, API keys, webhooks and the configuration file are gone; the service is driven by RabbitMQ (see docs/asyncapi.yaml). Verified on a real Aruba mailbox: sending, the Sent copy, acceptance, delivery and non-delivery receipts, and the same receipt events after a restart.
 
 ### Changed
 

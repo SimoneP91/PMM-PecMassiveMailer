@@ -6,15 +6,9 @@ How to use it, in words and with PHP examples: [docs/en/messages.md](docs/en/mes
 
 ## Status
 
-Stage 6, the move from an HTTP API with a database to queues, is in progress. Stages 1 to 5 (HTTP API and MongoDB, version 0.5.1) stay in the git history.
+Version 0.6.0: the move from an HTTP API with a database to queues is complete ([ADR 0006](docs/en/adr/0006-queues-no-database.md)). Sending, the Sent copy, the outcomes and the receipts work end to end, verified on a real Aruba mailbox. Versions up to 0.5.1 (HTTP API and MongoDB) stay in the git history.
 
-| Phase | Scope                                                                                                 | State |
-| ----- | ----------------------------------------------------------------------------------------------------- | ----- |
-| 1     | message contract: AsyncAPI document and guides                                                        | done  |
-| 2     | cleanup, configuration from the environment, RabbitMQ connection and queues, probes, local stack, CLI | done  |
-| 3     | sending: checks, SMTP, Sent copy, pace, retries, outcomes, redelivered PECs                           | done  |
-| 4     | receipts: reading the mailbox, receipt events                                                         | done  |
-| 5     | documentation and collaudo on real mailboxes                                                          | next  |
+Before production: a collaudo on a Legalmail mailbox (the production provider), and the RabbitMQ settings of [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) applied by whoever runs the broker.
 
 ## Stack
 
