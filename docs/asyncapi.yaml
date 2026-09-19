@@ -1,0 +1,668 @@
+asyncapi: 3.1.0
+id: urn:pecmailer
+info:
+  title: pecmailer
+  version: 0.6.0
+  description: |
+    A PEC (Italian certified e-mail) sending service. One container serves one
+    tenant and one of its mailboxes, and keeps nothing: the queues are its
+    input and its output. Whoever fills and empties the queues keeps the
+    records, the attachments and the receipts.
+
+    - Put one PEC per message in the input queue.
+    - Read from the output queue what happened to it (sent, rejected, failed
+      or uncertain) and then every receipt the providers issue for it, with
+      the receipt file itself: the legal proof.
+
+    Delivery is at least once in both directions. Every output event carries
+    a stable `eventId`: a consumer that has already processed it discards the
+    copy. Events about the same PEC may arrive in any order (an acceptance
+    receipt can come before the `sent` event).
+
+    The same contract in words, with PHP examples: docs/it/messaggi.md
+    (Italian), docs/en/messages.md (English).
+defaultContentType: application/json
+
+servers:
+  development:
+    host: localhost:5672
+    protocol: amqp
+    protocolVersion: 0.9.1
+    description: RabbitMQ of docker-compose.yml. Management page on http://localhost:15672.
+
+channels:
+  input:
+    address: pecmailer.{tenant}.{mailbox}.in
+    title: PEC to send
+    description: |
+      One PEC per message. Quorum queue (replicated, messages survive a
+      broker restart), declared by the container at start-up if missing,
+      with a delivery limit: a message delivered too many times without being
+      acknowledged goes to the dead-letter queue.
+    parameters:
+      tenant:
+        description: Code of the tenant, e.g. `serfin`.
+      mailbox:
+        description: Code of the mailbox, e.g. `serfin-aruba`.
+    messages:
+      sendRequest:
+        $ref: '#/components/messages/SendRequest'
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: pecmailer.{tenant}.{mailbox}.in
+          durable: true
+          exclusive: false
+          autoDelete: false
+        bindingVersion: 0.3.0
+
+  output:
+    address: pecmailer.{tenant}.{mailbox}.out
+    title: What happened
+    description: |
+      Outcomes of every PEC taken from the input queue, and every receipt read
+      from the mailbox. Quorum queue. The AMQP `type` property is the event
+      name, `message_id` is the `eventId`.
+    parameters:
+      tenant:
+        description: Code of the tenant.
+      mailbox:
+        description: Code of the mailbox.
+    messages:
+      sent:
+        $ref: '#/components/messages/Sent'
+      rejected:
+        $ref: '#/components/messages/Rejected'
+      failed:
+        $ref: '#/components/messages/Failed'
+      uncertain:
+        $ref: '#/components/messages/Uncertain'
+      receipt:
+        $ref: '#/components/messages/Receipt'
+      mailboxSuspended:
+        $ref: '#/components/messages/MailboxSuspended'
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: pecmailer.{tenant}.{mailbox}.out
+          durable: true
+          exclusive: false
+          autoDelete: false
+        bindingVersion: 0.3.0
+
+  deadLetters:
+    address: pecmailer.{tenant}.{mailbox}.dead
+    title: Unreadable input
+    description: |
+      Input messages the container could not even read (not JSON, no usable
+      `id`), or that were delivered too many times without an outcome. Kept
+      as they arrived, for a person to look at. Nothing is sent for them.
+    parameters:
+      tenant:
+        description: Code of the tenant.
+      mailbox:
+        description: Code of the mailbox.
+    messages:
+      deadLetter:
+        $ref: '#/components/messages/DeadLetter'
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: pecmailer.{tenant}.{mailbox}.dead
+          durable: true
+          exclusive: false
+          autoDelete: false
+        bindingVersion: 0.3.0
+
+operations:
+  takeSendRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/input'
+    title: Take the next PEC to send
+    description: |
+      One message at a time. The container acknowledges it only after
+      RabbitMQ has confirmed that its outcome is stored in the output queue.
+      A message delivered again after a crash is never sent blindly: the
+      container looks in the mailbox for the acceptance receipt of that PEC.
+      Found: `sent` (confirmedBy ACCEPTANCE_RECEIPT). Not found: `uncertain`.
+    bindings:
+      amqp:
+        ack: true
+        bindingVersion: 0.3.0
+    messages:
+      - $ref: '#/channels/input/messages/sendRequest'
+
+  publishOutcome:
+    action: send
+    channel:
+      $ref: '#/channels/output'
+    title: Report what happened
+    bindings:
+      amqp:
+        deliveryMode: 2
+        bindingVersion: 0.3.0
+    messages:
+      - $ref: '#/channels/output/messages/sent'
+      - $ref: '#/channels/output/messages/rejected'
+      - $ref: '#/channels/output/messages/failed'
+      - $ref: '#/channels/output/messages/uncertain'
+      - $ref: '#/channels/output/messages/receipt'
+      - $ref: '#/channels/output/messages/mailboxSuspended'
+
+  deadLetter:
+    action: send
+    channel:
+      $ref: '#/channels/deadLetters'
+    title: Set aside what cannot be read
+    messages:
+      - $ref: '#/channels/deadLetters/messages/deadLetter'
+
+components:
+  messages:
+    SendRequest:
+      name: sendRequest
+      title: A PEC to send
+      summary: Published by the sender, persistent, content type application/json.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SendRequest'
+      examples:
+        - name: withAttachment
+          payload:
+            version: 1
+            id: 7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            reference: pratica-4521
+            batch: solleciti-2026-09
+            to:
+              address: destinatario@pec.example
+              name: Mario Rossi
+            subject: Sollecito pratica 4521
+            html: <p>Gentile Mario Rossi,</p><p>le inviamo in allegato il sollecito.</p>
+            attachments:
+              - filename: sollecito.pdf
+                content: JVBERi0xLjQK...
+
+    Sent:
+      name: sent
+      title: The provider took the PEC
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/Sent'
+      examples:
+        - name: sent
+          payload:
+            version: 1
+            event: sent
+            eventId: sent:7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            occurredAt: '2026-09-19T13:41:20.300Z'
+            tenant: serfin
+            mailbox: serfin-aruba
+            id: 7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            reference: pratica-4521
+            batch: solleciti-2026-09
+            messageId: <pm.7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f@pec.serfin.example>
+            sentAt: '2026-09-19T13:41:19.712Z'
+            confirmedBy: SMTP
+            smtpResponse: '250 2.0.0 Ok: queued as 4hn9cv4XD9z97'
+            attempts: 1
+            sentCopy: ARCHIVED
+            warnings: []
+
+    Rejected:
+      name: rejected
+      title: Not sent, the message breaks a rule
+      summary: Nothing left. Fix the message and publish it again with a new id.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/Rejected'
+      examples:
+        - name: notPec
+          payload:
+            version: 1
+            event: rejected
+            eventId: rejected:7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            occurredAt: '2026-09-19T13:41:18.990Z'
+            tenant: serfin
+            mailbox: serfin-aruba
+            id: 7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            reference: pratica-4521
+            errors:
+              - code: RECIPIENT_NOT_PEC
+                field: to.address
+                detail: gmail.com is an ordinary mail service, not PEC
+
+    Failed:
+      name: failed
+      title: Not sent, the provider refused it
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/Failed'
+      examples:
+        - name: refused
+          payload:
+            version: 1
+            event: failed
+            eventId: failed:7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            occurredAt: '2026-09-19T13:41:19.500Z'
+            tenant: serfin
+            mailbox: serfin-aruba
+            id: 7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            code: SMTP_550
+            smtpCode: 550
+            detail: 550 5.1.1 Recipient address rejected
+            attempts: 1
+
+    Uncertain:
+      name: uncertain
+      title: The outcome is not known
+      summary: |
+        The PEC may have left. Do not resend it blindly: wait for its receipts
+        (they keep coming for this id) and look in the mailbox's Sent folder.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/Uncertain'
+      examples:
+        - name: connectionLost
+          payload:
+            version: 1
+            event: uncertain
+            eventId: uncertain:7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            occurredAt: '2026-09-19T13:43:02.000Z'
+            tenant: serfin
+            mailbox: serfin-aruba
+            id: 7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            messageId: <pm.7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f@pec.serfin.example>
+            reason: CONNECTION_LOST_AFTER_DATA
+            detail: the server had the message and the connection dropped before its answer
+
+    Receipt:
+      name: receipt
+      title: A receipt from a provider
+      summary: |
+        Carries the receipt file itself (base64): it is the legal proof, keep
+        it. Only `id` links it to the PEC; `reference` and `batch` are not
+        repeated here.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/Receipt'
+      examples:
+        - name: delivery
+          payload:
+            version: 1
+            event: receipt
+            eventId: receipt:3b1f0e9a2c4d6b8a0f1e3d5c7b9a1f2e4d6c8b0a1f3e5d7c9b1a3f5e7d9c1b3a
+            occurredAt: '2026-09-19T13:41:47.000Z'
+            tenant: serfin
+            mailbox: serfin-aruba
+            id: 7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f
+            messageId: <pm.7f1c2e4a9b8d4c1e8f0a3d2b1a0c9e8f@pec.serfin.example>
+            receiptType: DELIVERY
+            final: true
+            issuedAt: '2026-09-19T13:41:20.000Z'
+            provider: ARUBA PEC S.p.A.
+            recipient: destinatario@pec.example
+            providerId: opec21.20260919154120.12345.678.1.1@pec.aruba.it
+            receiptMessageId: <jpec1329.20260919154119.80600.507.1.1@pec.aruba.it>
+            eml: UmV0dXJuLVBhdGg6IDxwb3N0YS1jZXJ0aWZpY2F0YUBwZWMuYXJ1YmEuaXQ+...
+            emlSha256: 03ec01c62829c7afc64d9a373994250f197f6a917f032742ce539d26fe832157
+            daticert: PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4...
+
+    MailboxSuspended:
+      name: mailboxSuspended
+      title: The mailbox stopped
+      summary: |
+        The provider refused the login. The container stops taking PECs, which
+        wait safely in the input queue, and sends nothing until it is
+        restarted with the right password.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MailboxSuspended'
+      examples:
+        - name: smtpRefused
+          payload:
+            version: 1
+            event: mailbox.suspended
+            eventId: mailbox.suspended:serfin-aruba:2026-09-19T14:00:00.000Z
+            occurredAt: '2026-09-19T14:00:00.000Z'
+            tenant: serfin
+            mailbox: serfin-aruba
+            cause: SMTP_AUTH_REFUSED
+            detail: 535 5.7.8 Authentication failed
+
+    DeadLetter:
+      name: deadLetter
+      title: An input message set aside
+      summary: The original message, byte for byte, with the AMQP headers RabbitMQ adds when it dead-letters.
+      contentType: application/octet-stream
+      payload:
+        type: string
+
+  schemas:
+    Id:
+      type: string
+      pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$
+      description: |
+        The sender's identifier of one PEC, unique for ever: it becomes part
+        of the Message-ID (`<pm.{id}@{sender domain}>`), which is how receipts
+        find their way back. A UUID is ideal. Publishing the same id twice
+        sends two PECs whose receipts cannot be told apart. It is visible to
+        the recipient: never put personal data in it.
+
+    File:
+      type: string
+      contentEncoding: base64
+      description: The file content, base64-encoded.
+
+    SendRequest:
+      type: object
+      additionalProperties: false
+      required: [version, id, to, subject, html]
+      properties:
+        version:
+          const: 1
+        id:
+          $ref: '#/components/schemas/Id'
+        reference:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Your label for this PEC, repeated in its sent/rejected/failed/uncertain event.
+        batch:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Your label for a group of PECs, repeated like `reference`.
+        to:
+          type: object
+          additionalProperties: false
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: email
+              maxLength: 254
+              description: A PEC address. A domain that is not PEC is rejected.
+            name:
+              type: string
+              minLength: 1
+              maxLength: 200
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Final text, no line breaks.
+        html:
+          type: string
+          minLength: 1
+          maxLength: 524288
+          description: |
+            Final HTML (at most 512 KiB), checked against a closed list of
+            elements and attributes: no scripts, forms, frames, event handlers,
+            remote images or CSS url(); links only https, http and mailto.
+            Inline images are referenced as `<img src="cid:...">`.
+        attachments:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [filename, content]
+            properties:
+              filename:
+                type: string
+                minLength: 1
+                maxLength: 255
+                description: |
+                  No path separators. The type is detected from the content,
+                  never trusted from the name alone; allowed extensions: pdf,
+                  p7m, xml, txt, csv, rtf, eml, zip, doc, docx, xls, xlsx, ppt,
+                  pptx, odt, ods, png, jpg, jpeg, gif. Executables are refused.
+              content:
+                $ref: '#/components/schemas/File'
+        inlineImages:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [cid, content]
+            properties:
+              cid:
+                type: string
+                pattern: ^[A-Za-z0-9._-]{1,64}$
+              filename:
+                type: string
+                minLength: 1
+                maxLength: 255
+              content:
+                $ref: '#/components/schemas/File'
+        options:
+          type: object
+          additionalProperties: false
+          properties:
+            unverifiedRecipient:
+              type: string
+              enum: [reject, send]
+              default: reject
+              description: What to do when the recipient's domain cannot be classified as PEC or not.
+
+    EventBase:
+      type: object
+      required: [version, event, eventId, occurredAt, tenant, mailbox]
+      properties:
+        version:
+          const: 1
+        event:
+          type: string
+        eventId:
+          type: string
+          description: |
+            Stable: the same fact always has the same eventId, so a copy
+            delivered twice is recognised. `<event>:<id>` for the outcome of a
+            PEC, `receipt:<sha256 of the receipt's Message-ID>` for a receipt.
+        occurredAt:
+          type: string
+          format: date-time
+        tenant:
+          type: string
+        mailbox:
+          type: string
+
+    PecEventBase:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [id]
+          properties:
+            id:
+              $ref: '#/components/schemas/Id'
+            reference:
+              type: string
+            batch:
+              type: string
+
+    Sent:
+      allOf:
+        - $ref: '#/components/schemas/PecEventBase'
+        - type: object
+          required: [messageId, sentAt, confirmedBy, attempts, sentCopy, warnings]
+          properties:
+            event:
+              const: sent
+            messageId:
+              type: string
+              description: The Message-ID of the PEC, quoted by every receipt.
+            sentAt:
+              type: string
+              format: date-time
+            confirmedBy:
+              type: string
+              enum: [SMTP, ACCEPTANCE_RECEIPT]
+              description: |
+                SMTP: the provider answered 250. ACCEPTANCE_RECEIPT: the PEC was
+                delivered to the container again after a crash, and its
+                acceptance receipt proved that it had already left.
+            smtpResponse:
+              type: string
+              description: The provider's final answer, when confirmedBy is SMTP.
+            attempts:
+              type: integer
+              minimum: 0
+            sentCopy:
+              type: string
+              enum: [ARCHIVED, FAILED, DISABLED]
+              description: Whether a copy was filed in the mailbox's Sent folder.
+            sentCopyError:
+              type: string
+            warnings:
+              type: array
+              items:
+                $ref: '#/components/schemas/Problem'
+
+    Rejected:
+      allOf:
+        - $ref: '#/components/schemas/PecEventBase'
+        - type: object
+          required: [errors]
+          properties:
+            event:
+              const: rejected
+            errors:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/Problem'
+
+    Failed:
+      allOf:
+        - $ref: '#/components/schemas/PecEventBase'
+        - type: object
+          required: [code, detail, attempts]
+          properties:
+            event:
+              const: failed
+            code:
+              type: string
+              description: |
+                SMTP_<code> for a permanent refusal (e.g. SMTP_550),
+                RETRIES_EXHAUSTED when temporary errors lasted longer than the
+                retry window.
+            smtpCode:
+              type: integer
+            detail:
+              type: string
+            attempts:
+              type: integer
+              minimum: 1
+
+    Uncertain:
+      allOf:
+        - $ref: '#/components/schemas/PecEventBase'
+        - type: object
+          required: [messageId, reason, detail]
+          properties:
+            event:
+              const: uncertain
+            messageId:
+              type: string
+            reason:
+              type: string
+              enum: [CONNECTION_LOST_AFTER_DATA, REDELIVERED_WITHOUT_ACCEPTANCE]
+              description: |
+                CONNECTION_LOST_AFTER_DATA: the provider had the whole message
+                when the connection dropped. REDELIVERED_WITHOUT_ACCEPTANCE: the
+                PEC came back after a crash and no acceptance receipt was found.
+            detail:
+              type: string
+
+    Receipt:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [id, messageId, receiptType, final, issuedAt, eml, emlSha256]
+          properties:
+            event:
+              const: receipt
+            id:
+              $ref: '#/components/schemas/Id'
+            messageId:
+              type: string
+            receiptType:
+              type: string
+              enum:
+                - ACCEPTANCE
+                - NON_ACCEPTANCE
+                - TAKING_CHARGE
+                - DELIVERY
+                - NON_DELIVERY
+                - NON_DELIVERY_WARNING
+                - VIRUS_DETECTED
+            final:
+              type: boolean
+              description: |
+                true for DELIVERY, NON_DELIVERY, NON_ACCEPTANCE and
+                VIRUS_DETECTED: the PEC has its final outcome. ACCEPTANCE,
+                TAKING_CHARGE and NON_DELIVERY_WARNING come before it.
+            issuedAt:
+              type: string
+              format: date-time
+              description: When the provider issued it (one-second precision).
+            provider:
+              type: string
+            recipient:
+              type: string
+            error:
+              $ref: '#/components/schemas/Problem'
+              description: |
+                For a non-delivery: the provider's code (it may be the generic
+                "altro") and its explanation, which is what tells the reason.
+            providerId:
+              type: string
+            receiptMessageId:
+              type: string
+            eml:
+              $ref: '#/components/schemas/File'
+              description: The receipt exactly as the provider sent it, signature included.
+            emlSha256:
+              type: string
+              pattern: ^[0-9a-f]{64}$
+            daticert:
+              $ref: '#/components/schemas/File'
+              description: Its daticert.xml, when it has one.
+
+    MailboxSuspended:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [cause, detail]
+          properties:
+            event:
+              const: mailbox.suspended
+            cause:
+              type: string
+              enum: [SMTP_AUTH_REFUSED, IMAP_AUTH_REFUSED]
+            detail:
+              type: string
+
+    Problem:
+      type: object
+      required: [code, detail]
+      properties:
+        code:
+          type: string
+          description: |
+            In rejected events: INVALID_MESSAGE, RECIPIENT_NOT_PEC,
+            RECIPIENT_UNVERIFIED, FORBIDDEN_ELEMENT, FORBIDDEN_ATTRIBUTE,
+            FORBIDDEN_CSS, FORBIDDEN_URL, FORBIDDEN_NODE, FORBIDDEN_DIRECTIVE,
+            EXTERNAL_IMAGE, UNDECLARED_INLINE_IMAGE, INLINE_IMAGE_NOT_IMAGE,
+            EXECUTABLE, EXTENSION_NOT_ALLOWED, CONTENT_MISMATCH,
+            MESSAGE_TOO_LARGE. In warnings: UNUSED_INLINE_IMAGE.
+        field:
+          type: string
+          description: Where, in the message, e.g. `to.address`, `attachments[2]`, `html`.
+        detail:
+          type: string
