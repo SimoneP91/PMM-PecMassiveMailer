@@ -8,7 +8,7 @@ How to use it, in words and with PHP examples: [docs/en/messages.md](docs/en/mes
 
 Version 0.6.1: the move from an HTTP API with a database to queues is complete ([ADR 0006](docs/en/adr/0006-queues-no-database.md)). Sending, the Sent copy, the outcomes and the receipts work end to end, verified on a real Aruba mailbox. Versions up to 0.5.1 (HTTP API and MongoDB) stay in the git history.
 
-Before production: a collaudo on a Legalmail mailbox (the production provider), and the RabbitMQ settings of [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) applied by whoever runs the broker.
+Before production: a collaudo on a Legalmail mailbox (the production provider); the RabbitMQ settings of [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) and the queue arguments of [docs/asyncapi.yaml](docs/asyncapi.yaml), applied by whoever runs the broker; the CRM side, which fills the input queues and keeps what comes out.
 
 ## Stack
 
@@ -51,9 +51,11 @@ docker compose -f docker-compose.test.yml up -d --wait
 npm run test:integration                              # against a real RabbitMQ and Greenmail
 ```
 
+A real mailbox (collaudo): a compose override kept outside git, in `data/`, starts one more container with the provider's settings on the local RabbitMQ. Its password comes from `.env` (never committed), or from variables typed in your own terminal when it must not be written anywhere. Run `probe` first, send only to addresses you control, remove the container afterwards.
+
 ## Configuration
 
-Environment variables only, all listed with their defaults in [.env.example](.env.example): who the container is (tenant, mailbox, provider, sender), the mailbox credentials, the pace, and `RABBITMQ_URL`. The queues are named `<prefix>.<tenant>.<mailbox>.in`, `.out` and `.dead`. A wrong variable stops the start with a message naming it.
+Environment variables only, all listed with their defaults in [.env.example](.env.example): who the container is (tenant, mailbox, provider, sender), the mailbox credentials, the pace, and `RABBITMQ_URL`. Provider presets `aruba`, `legalmail` and `namirial` fill servers, ports, security and Sent folder (Namirial's Sent folder must be given); `custom` asks for every setting. The queues are named `<prefix>.<tenant>.<mailbox>.in`, `.out` and `.dead`. A wrong variable stops the start with a message naming it.
 
 RabbitMQ needs two settings, in [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf): a maximum message size of 64 MB (a 30 MB PEC becomes about 40 MB inside a message; the default is 16 MB) and the 30-minute consumer timeout the retries are sized on.
 
@@ -63,7 +65,7 @@ RabbitMQ needs two settings, in [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/
 src/
   main.ts        the container: one tenant, one mailbox
   main.cli.ts    admin and development commands
-  app/           probes server, version
+  app/           the container's wiring, probes server, version
   config/        environment schema, provider presets
   queue/         the Queues interface and its RabbitMQ implementation
   modules/       recipients (PEC check) · templates (HTML rules) · attachments (type detection)

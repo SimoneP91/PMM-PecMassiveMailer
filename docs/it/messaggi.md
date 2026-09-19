@@ -8,15 +8,15 @@ La descrizione formale, leggibile dai programmi, è in [docs/asyncapi.yaml](../a
 
 ## Le code
 
-| Coda                                 | Chi scrive                                                     | Chi legge                               |
-| ------------------------------------ | -------------------------------------------------------------- | --------------------------------------- |
-| `pecmailer.{cliente}.{casella}.in`   | Il CRM: una PEC per messaggio                                  | Il container, una PEC alla volta        |
-| `pecmailer.{cliente}.{casella}.out`  | Il container: gli esiti e le ricevute                          | Il CRM                                  |
-| `pecmailer.{cliente}.{casella}.dead` | RabbitMQ, con i messaggi che il container non riesce a leggere | Una persona, per capire cosa non andava |
+| Coda                                 | Chi scrive                                                                                            | Chi legge                               |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `pecmailer.{cliente}.{casella}.in`   | Il CRM: una PEC per messaggio                                                                         | Il container, una PEC alla volta        |
+| `pecmailer.{cliente}.{casella}.out`  | Il container: gli esiti e le ricevute                                                                 | Il CRM                                  |
+| `pecmailer.{cliente}.{casella}.dead` | RabbitMQ, con i messaggi che il container non riesce a leggere o che lo hanno fatto fermare più volte | Una persona, per capire cosa non andava |
 
 Esempio: `pecmailer.serfin.serfin-aruba.in`.
 
-Le code sono di tipo "quorum": RabbitMQ ne tiene più copie e non perde i messaggi se si riavvia. Il container le crea al primo avvio, se non esistono già.
+Le code sono di tipo "quorum": RabbitMQ ne tiene più copie e non perde i messaggi se si riavvia. Il container le crea al primo avvio, se non esistono già. Se le crea chi gestisce RabbitMQ, deve usare esattamente i parametri elencati in [docs/asyncapi.yaml](../asyncapi.yaml).
 
 ## Spedire una PEC
 

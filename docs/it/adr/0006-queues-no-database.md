@@ -34,3 +34,13 @@ La versione 0.5.1 era un'API HTTP multi-cliente con un processo di invio e Mongo
 - Senza cursore, il lettore delle ricevute rilegge le ultime ore della casella a ogni avvio; il CRM scarta gli eventi ripetuti.
 - Test: unitari con una coda finta in memoria, di integrazione con RabbitMQ e Greenmail veri in Docker.
 - Le versioni da 0.1 a 0.5.1, con API HTTP, MongoDB e avvisi firmati, restano nella storia di git; le ADR da 0002 a 0005 le descrivono.
+
+## Modifiche successive
+
+0.6.1, dopo la revisione della fase:
+
+- La finestra dei ritentativi conta, oltre alle attese, un tempo massimo SMTP per ogni tentativo: 25 minuti in tutto.
+- Lo spostamento negli scarti avviene "almeno una volta" (`x-dead-letter-strategy: at-least-once`, che richiede `x-overflow: reject-publish`): un messaggio lascia la coda di ingresso solo quando la coda degli scarti l'ha salvato.
+- Una PEC riconsegnata si giudica solo sulle regole del suo contenuto, mai più sul destinatario: DNS ed elenchi cambiano, e una PEC partita non deve risultare `rejected`.
+- Allo spegnimento il container smette subito di prendere PEC, mentre il lettore delle ricevute finisce.
+- Il lettore delle ricevute rilegge 24 ore all'avvio, non più 72.

@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 ### Changed
 
 - ADR 0001 to 0005 marked as superseded by ADR 0006; kept as the record of the first design.
+- Documentation brought up to 0.6.1: README (status, provider presets, collaudo on a real mailbox), SECURITY.md (recipient checks, redelivery, secrets on a developer's machine), ADR 0006 (amendments of 0.6.1), the guides (who creates the queues, what ends up in `.dead`).
 
 ## [0.6.1] - 2026-09-19
 

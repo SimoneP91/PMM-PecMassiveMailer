@@ -8,15 +8,15 @@ The formal description, readable by programs, is [docs/asyncapi.yaml](../asyncap
 
 ## The queues
 
-| Queue                               | Written by                                            | Read by                              |
-| ----------------------------------- | ----------------------------------------------------- | ------------------------------------ |
-| `pecmailer.{tenant}.{mailbox}.in`   | The CRM: one PEC per message                          | The container, one PEC at a time     |
-| `pecmailer.{tenant}.{mailbox}.out`  | The container: outcomes and receipts                  | The CRM                              |
-| `pecmailer.{tenant}.{mailbox}.dead` | RabbitMQ, with the messages the container cannot read | A person, to find out what was wrong |
+| Queue                               | Written by                                                                               | Read by                              |
+| ----------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| `pecmailer.{tenant}.{mailbox}.in`   | The CRM: one PEC per message                                                             | The container, one PEC at a time     |
+| `pecmailer.{tenant}.{mailbox}.out`  | The container: outcomes and receipts                                                     | The CRM                              |
+| `pecmailer.{tenant}.{mailbox}.dead` | RabbitMQ, with the messages the container cannot read or that stopped it again and again | A person, to find out what was wrong |
 
 Example: `pecmailer.serfin.serfin-aruba.in`.
 
-The queues are "quorum" queues: RabbitMQ keeps several copies and loses no message when it restarts. The container creates them on its first start if they do not exist.
+The queues are "quorum" queues: RabbitMQ keeps several copies and loses no message when it restarts. The container creates them on its first start if they do not exist. When whoever runs RabbitMQ creates them, it uses exactly the arguments listed in [docs/asyncapi.yaml](../asyncapi.yaml).
 
 ## Sending a PEC
 

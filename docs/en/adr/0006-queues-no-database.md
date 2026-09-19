@@ -34,3 +34,13 @@ Version 0.5.1 was a multi-tenant HTTP API with a worker and MongoDB: it received
 - Without a cursor, the receipt reader re-reads the last hours of the mailbox at every start; the CRM discards the repeated events.
 - Tests: unit tests with an in-memory fake, integration tests against a real RabbitMQ and Greenmail in Docker.
 - Versions 0.1 to 0.5.1 (HTTP API, MongoDB, webhooks) stay in the git history; ADR 0002 to 0005 describe them.
+
+## Amendments
+
+0.6.1, after the review of the stage:
+
+- The retry window counts one SMTP timeout per attempt besides the waits: 25 minutes in all.
+- Dead-lettering is at least once (`x-dead-letter-strategy: at-least-once`, which requires `x-overflow: reject-publish`): a message leaves the input queue only once the dead-letter queue has stored it.
+- A redelivered PEC is judged only on the rules of its own content, never again on its recipient (DNS and lists change; a PEC that left must not come out `rejected`).
+- On shutdown the container stops consuming at once, while the receipt reader winds down.
+- The receipt reader re-reads 24 hours at start (was 72).

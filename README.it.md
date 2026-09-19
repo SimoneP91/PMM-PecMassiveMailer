@@ -8,7 +8,7 @@ Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messagg
 
 Versione 0.6.1: il passaggio da un'API HTTP con database alle code è completo ([ADR 0006](docs/it/adr/0006-queues-no-database.md)). Invio, copia in Inviata, esiti e ricevute funzionano da un capo all'altro, verificati su una casella Aruba reale. Le versioni fino alla 0.5.1, con API HTTP e MongoDB, restano nella storia di git.
 
-Prima della produzione: un collaudo su una casella Legalmail, il gestore usato in produzione, e le impostazioni di RabbitMQ di [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) applicate da chi gestisce il server.
+Prima della produzione: un collaudo su una casella Legalmail, il gestore usato in produzione; le impostazioni di RabbitMQ di [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf) e i parametri delle code di [docs/asyncapi.yaml](docs/asyncapi.yaml), applicati da chi gestisce il server; la parte del CRM, che riempie le code di ingresso e conserva quello che esce.
 
 ## Tecnologie
 
@@ -51,9 +51,11 @@ docker compose -f docker-compose.test.yml up -d --wait
 npm run test:integration                              # contro un RabbitMQ e un Greenmail veri
 ```
 
+Una casella vera (collaudo): un file di compose aggiuntivo, tenuto fuori da git in `data/`, avvia un container in più con le impostazioni del gestore, sul RabbitMQ locale. La password arriva da `.env`, che non va mai in git, oppure da variabili scritte nel proprio terminale quando non deve finire in nessun file. Prima `probe`, poi solo PEC a indirizzi propri; alla fine il container si rimuove.
+
 ## Configurazione
 
-Solo variabili d'ambiente, tutte elencate con i valori predefiniti in [.env.example](.env.example): chi è il container (cliente, casella, gestore, mittente), le credenziali della casella, il ritmo e `RABBITMQ_URL`. Le code si chiamano `<prefisso>.<cliente>.<casella>.in`, `.out` e `.dead`. Una variabile sbagliata ferma l'avvio con un messaggio che la nomina.
+Solo variabili d'ambiente, tutte elencate con i valori predefiniti in [.env.example](.env.example): chi è il container (cliente, casella, gestore, mittente), le credenziali della casella, il ritmo e `RABBITMQ_URL`. Le impostazioni pronte `aruba`, `legalmail` e `namirial` riempiono server, porte, cifratura e cartella Inviata (per Namirial la cartella va indicata); `custom` le chiede tutte. Le code si chiamano `<prefisso>.<cliente>.<casella>.in`, `.out` e `.dead`. Una variabile sbagliata ferma l'avvio con un messaggio che la nomina.
 
 RabbitMQ richiede due impostazioni, in [docker/rabbitmq/rabbitmq.conf](docker/rabbitmq/rabbitmq.conf): una dimensione massima dei messaggi di 64 MB, perché una PEC da 30 MB dentro un messaggio diventa circa 40 MB e il predefinito è 16 MB; e i 30 minuti di attesa della conferma, su cui sono calcolati i ritentativi.
 
@@ -63,7 +65,7 @@ RabbitMQ richiede due impostazioni, in [docker/rabbitmq/rabbitmq.conf](docker/ra
 src/
   main.ts        il container: un cliente, una casella
   main.cli.ts    comandi di amministrazione e di sviluppo
-  app/           server delle sonde, versione
+  app/           montaggio del container, server delle sonde, versione
   config/        schema delle variabili, impostazioni dei gestori
   queue/         l'interfaccia delle code e la sua versione RabbitMQ
   modules/       recipients (controllo PEC) · templates (regole HTML) · attachments (tipo degli allegati)
