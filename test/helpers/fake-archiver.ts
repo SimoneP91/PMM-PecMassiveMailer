@@ -4,7 +4,8 @@ import type { SentArchiver, SentArchiverFactory } from '../../src/modules/sendin
 /** Records what the worker would file in the Sent folder; can be told to fail. */
 export class FakeSentArchiverFactory implements SentArchiverFactory {
   public readonly appended: { mailbox: string; eml: string; sentAt: Date }[] = [];
-  public failNext = false;
+  /** The copy of a message whose EML contains this text fails once (scoped, so another message cannot use it up). */
+  public failFor: string | undefined;
   public created = 0;
 
   public create(mailbox: ResolvedMailbox, _imap: ResolvedImap): SentArchiver {
@@ -12,8 +13,8 @@ export class FakeSentArchiverFactory implements SentArchiverFactory {
 
     return {
       append: (eml: Buffer, sentAt: Date): Promise<void> => {
-        if (this.failNext) {
-          this.failNext = false;
+        if (this.failFor !== undefined && eml.includes(this.failFor)) {
+          this.failFor = undefined;
 
           return Promise.reject(new Error('IMAP APPEND failed (fake)'));
         }

@@ -1,0 +1,2 @@
+# Test fixtures are byte-exact copies of real mail: never convert their line endings.
+test/fixtures/**/*.eml -text

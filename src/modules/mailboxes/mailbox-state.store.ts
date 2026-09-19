@@ -62,7 +62,7 @@ export class MailboxStateStore {
         .findOneAndUpdate(
           { _id: code },
           { $set: { status: 'SUSPENDED', cause, reason: reason.slice(0, 1000), changedAt: at } },
-          { upsert: true, new: false, session },
+          { upsert: true, returnDocument: 'before', session },
         )
         .lean();
       if (previous?.status === 'SUSPENDED' || tenantId === undefined) {

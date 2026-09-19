@@ -27,6 +27,14 @@ Review of stages 4 and 5.
 - The outbox ignored a duplicate-key error inside a transaction, which aborts the transaction.
 - A cancel on a finished batch set `cancelRequestedAt`.
 - The settlement job scanned the batches without an index (new index `{status, updatedAt}`: run `db sync-indexes`).
+- A receipt no longer moves back the send time of a message the worker sent: the daticert time has one-second precision. Only a message without one (STUCK, requeued) takes it from the receipt.
+- Mongoose 9 logged a deprecation warning on every state change (`new` option of `findOneAndUpdate`, now `returnDocument`).
+
+### Added
+
+- First collaudo on a real Aruba PEC mailbox: send, Sent copy, acceptance, delivery, non-delivery and batch settlement verified end to end.
+- Real Aruba receipts and a real transport envelope, anonymised, as test fixtures (`test/fixtures/receipts/aruba`), with their tests.
+- `.gitattributes`: fixture `.eml` files are kept byte for byte.
 
 ## [0.5.0] - 2026-09-19
 

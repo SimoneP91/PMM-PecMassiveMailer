@@ -134,7 +134,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   smtp.behaviour = { kind: 'accept' };
-  worker.archiver.failNext = false;
+  worker.archiver.failFor = undefined;
 });
 
 afterAll(async () => {
@@ -225,7 +225,7 @@ describe('sending', () => {
   });
 
   it('records a failed Sent-folder copy without touching the message outcome', async () => {
-    worker.archiver.failNext = true;
+    worker.archiver.failFor = 'copy@pec.it';
     const { ids } = await submit([{ to: 'copy@pec.it' }]);
     const id = ids.get('r-0') ?? '';
 

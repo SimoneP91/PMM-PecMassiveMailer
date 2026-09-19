@@ -48,7 +48,7 @@ export class BatchLifecycle {
           left === null
             ? { $set: { status: 'CANCELLED', cancelledAt: now } }
             : { $set: { status: 'SENT', sentAt: now } },
-          { new: true, session },
+          { returnDocument: 'after', session },
         )
         .lean();
       if (batch?.status !== 'SENT') {
@@ -85,7 +85,7 @@ export class BatchLifecycle {
         .findOneAndUpdate(
           { _id: batchId, status: 'SENT' },
           { $set: { status: 'SETTLED', settledAt: now } },
-          { new: true, session },
+          { returnDocument: 'after', session },
         )
         .lean();
       if (batch === null) {

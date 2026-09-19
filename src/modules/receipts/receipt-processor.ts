@@ -193,7 +193,6 @@ export class ReceiptProcessor {
       case 'accepted': {
         const moved = await this.messages.updateOne(from, {
           $set: { status: 'ACCEPTED', acceptedAt: at, settlement: 'PENDING' },
-          $min: { sentAt: at },
           $unset: { settledAt: 1, failedAt: 1, stuckAt: 1 },
         });
         if (moved.modifiedCount === 0) {
@@ -210,7 +209,6 @@ export class ReceiptProcessor {
           { _id: message._id, status: { $in: [...MOVABLE, 'ACCEPTED'] } },
           {
             $set: { status: 'DELIVERED', deliveredAt: at, settlement: 'SETTLED', settledAt: at },
-            $min: { sentAt: at },
             $unset: { failedAt: 1, stuckAt: 1 },
           },
         );
@@ -229,13 +227,15 @@ export class ReceiptProcessor {
               settlement: 'SETTLED',
               settledAt: at,
             },
-            $min: { sentAt: at },
             $unset: { failedAt: 1, stuckAt: 1 },
           },
         );
         break;
     }
 
+    // A message the worker never saw leave (STUCK, requeued) gets its send time from the receipt.
+    // One the worker did send keeps its own, more precise, time: the daticert has one-second precision.
+    await this.messages.updateOne({ _id: message._id, sentAt: { $exists: false } }, { $set: { sentAt: at } });
     if (message.status !== 'SENT' && MOVABLE.includes(message.status)) {
       this.logger.warn(
         { messageId: message._id, was: message.status, receipt: parsed.type },

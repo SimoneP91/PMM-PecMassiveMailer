@@ -97,7 +97,7 @@ export class MessageQueueRepository {
           $set: { status: 'SENDING', sendingStartedAt: now, heartbeatAt: now, workerId },
           $inc: { attempts: 1 },
         },
-        { sort: { nextAttemptAt: 1, createdAt: 1, position: 1 }, new: true },
+        { sort: { nextAttemptAt: 1, createdAt: 1, position: 1 }, returnDocument: 'after' },
       )
       .lean();
     if (claimed === null) {
@@ -289,7 +289,7 @@ export class MessageQueueRepository {
     update: Record<string, unknown>,
   ): Promise<boolean> {
     const moved = await this.messages
-      .findOneAndUpdate({ _id: id, status: from }, update, { new: true })
+      .findOneAndUpdate({ _id: id, status: from }, update, { returnDocument: 'after' })
       .lean();
     if (moved === null) {
       return false;

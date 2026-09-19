@@ -76,7 +76,7 @@ export class WebhookDispatcher {
           $set: { status: 'DELIVERING', lockedUntil: new Date(now.getTime() + (timeoutSeconds + 30) * 1000) },
           $inc: { attempts: 1 },
         },
-        { sort: { nextAttemptAt: 1 }, new: true },
+        { sort: { nextAttemptAt: 1 }, returnDocument: 'after' },
       )
       .lean();
     if (event === null) {
