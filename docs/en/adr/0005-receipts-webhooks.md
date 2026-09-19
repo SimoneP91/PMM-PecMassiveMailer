@@ -1,6 +1,6 @@
 # ADR 0005 — Receipts, settlement and webhooks
 
-**Date**: 2026-09-19 · **Status**: accepted
+**Date**: 2026-09-19 · **Status**: superseded by [ADR 0006](0006-queues-no-database.md) (0.6.0)
 
 ## Context
 

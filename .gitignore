@@ -7,26 +7,19 @@ dist/
 coverage/
 *.tsbuildinfo
 
-# Local configuration and secrets
+# Local secrets
 .env
 .env.*
 !.env.example
-config/pecmailer.yaml
-config/*.local.yaml
 
-# Local runtime data (docker volumes bound to the tree, storage of a dev run)
+# Local data: collaudo files, saved outcomes, one-off scripts
 data/
-storage/
 
 # Editors and OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Generated
-openapi.json
-
 
 #Local documentation
 documentation.md

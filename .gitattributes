@@ -1,2 +1,15 @@
+# LF everywhere, whatever core.autocrlf says on this machine: the formatter
+# (.prettierrc), .editorconfig and the Linux containers all expect it.
+* text=auto eol=lf
+
+# Binary files are never converted, even when they happen to contain no NUL
+# byte (a small PDF, say), which is what makes git guess "text".
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.p7m binary
+
 # Test fixtures are byte-exact copies of real mail: never convert their line endings.
 test/fixtures/**/*.eml -text

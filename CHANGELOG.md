@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+
+- A unit test of the real SMTP client against a real SMTP dialogue (smtp-server in the test process): a connection cut after the server took the message is `stuck`, a refused login suspends, 5xx fails, 4xx retries. Its test server had been left unused since the move to queues.
+
+### Removed
+
+- Leftovers of the HTTP/MongoDB version in `.gitignore` and `.dockerignore` (configuration file, storage folder, openapi.json).
+
+### Changed
+
+- ADR 0001 to 0005 marked as superseded by ADR 0006; kept as the record of the first design.
+
 ## [0.6.1] - 2026-09-19
 
 Review of stage 6. Two changes need action where the service already runs: the provider `infocert` is now `namirial`, and the input queues must be recreated (their arguments changed).

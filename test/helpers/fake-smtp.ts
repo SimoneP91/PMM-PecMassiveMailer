@@ -1,4 +1,4 @@
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 
 import { SMTPServer, type SMTPServerAddress, type SMTPServerSession } from 'smtp-server';
 
@@ -29,6 +29,8 @@ export class FakeSmtpServer {
   public authAttempts = 0;
   private readonly server: SMTPServer;
   private listeningPort = 0;
+  /** Open client connections, so a scenario can cut them like a network failure would. */
+  private readonly sockets = new Set<Socket>();
 
   public constructor(
     private readonly expectedUser = 'solleciti@pec.serfin.example',
@@ -81,7 +83,9 @@ export class FakeSmtpServer {
           if (behaviour.kind === 'hangAfterData') {
             // The message was fully received (354 was sent), then the connection dies silently.
             setTimeout(() => {
-              (session as unknown as { _socket?: { destroy(): void } })._socket?.destroy();
+              for (const socket of this.sockets) {
+                socket.destroy();
+              }
             }, 50);
 
             return;
@@ -106,6 +110,10 @@ export class FakeSmtpServer {
       },
     });
     this.server.on('error', () => undefined);
+    this.server.server.on('connection', (socket: Socket) => {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
+    });
   }
 
   public get port(): number {

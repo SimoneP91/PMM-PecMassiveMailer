@@ -1,6 +1,6 @@
 # ADR 0001 — Stack
 
-**Data**: 18/09/2026 · **Stato**: accettata
+**Data**: 18/09/2026 · **Stato**: in parte sostituita dalla [ADR 0006](0006-queues-no-database.md) (niente NestJS né MongoDB dalla 0.6.0)
 
 ## Contesto
 

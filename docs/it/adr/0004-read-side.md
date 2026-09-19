@@ -1,6 +1,6 @@
 # ADR 0004 — Lettura, annullamento e revisione della fase 3
 
-**Data**: 19/09/2026 · **Stato**: accettata
+**Data**: 19/09/2026 · **Stato**: sostituita dalla [ADR 0006](0006-queues-no-database.md) (0.6.0)
 
 ## Contesto
 

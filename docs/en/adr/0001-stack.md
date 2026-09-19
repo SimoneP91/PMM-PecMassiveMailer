@@ -1,6 +1,6 @@
 # ADR 0001 — Stack
 
-**Date**: 2026-09-18 · **Status**: accepted
+**Date**: 2026-09-18 · **Status**: partly superseded by [ADR 0006](0006-queues-no-database.md) (no NestJS, no MongoDB since 0.6.0)
 
 ## Context
 
