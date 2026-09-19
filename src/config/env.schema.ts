@@ -1,61 +1,112 @@
 import { z } from 'zod';
 
 /**
- * Everything the process reads from the environment, validated once at boot.
+ * Everything a container reads from its environment, validated once at boot.
+ * One container serves one tenant and one mailbox, so there is no
+ * configuration file: every setting is a variable, which is how Kubernetes
+ * (ConfigMap + Secret) and docker-compose both hand settings to a container.
  *
- * A malformed variable stops the start-up with a message naming the variable:
- * discovering a typo in MONGODB_URI from a stack trace at the first request is
- * the kind of thing this file exists to prevent.
+ * A malformed variable stops the start with a message naming it.
  */
+const code = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'lower-case letters, digits and "-", up to 63 characters');
 const transportSecurity = z.enum(['none', 'starttls', 'tls']);
+const port = z.coerce.number().int().min(1).max(65_535);
+const optionalText = z.string().min(1).optional();
+const commaList = z
+  .string()
+  .default('')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry !== ''),
+  );
+const seconds = z.coerce.number().int();
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   LOG_PRETTY: z.stringbool().default(false),
 
-  HTTP_HOST: z.string().min(1).default('0.0.0.0'),
-  HTTP_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-  SWAGGER_ENABLED: z.stringbool().default(true),
+  // Who this container is.
+  PECMAILER_TENANT: code,
+  PECMAILER_MAILBOX: code,
+  PECMAILER_PROVIDER: z.enum(['aruba', 'legalmail', 'namirial', 'custom']),
+  PECMAILER_FROM_ADDRESS: z.email().max(254),
+  PECMAILER_FROM_NAME: z.string().min(1).max(200),
 
-  MONGODB_URI: z
+  // SMTP: host, port and security come from the provider preset unless set.
+  PECMAILER_SMTP_USERNAME: optionalText,
+  PECMAILER_SMTP_PASSWORD: z.string().min(1),
+  PECMAILER_SMTP_HOST: optionalText,
+  PECMAILER_SMTP_PORT: port.optional(),
+  PECMAILER_SMTP_SECURITY: transportSecurity.optional(),
+  PECMAILER_SMTP_TIMEOUT_SECONDS: seconds.min(5).max(600).default(60),
+
+  // IMAP: the Sent copy and the receipts. Username and password default to the SMTP ones.
+  PECMAILER_IMAP_ENABLED: z.stringbool().default(true),
+  PECMAILER_IMAP_USERNAME: optionalText,
+  PECMAILER_IMAP_PASSWORD: optionalText,
+  PECMAILER_IMAP_HOST: optionalText,
+  PECMAILER_IMAP_PORT: port.optional(),
+  PECMAILER_IMAP_SECURITY: transportSecurity.optional(),
+  PECMAILER_IMAP_SENT_FOLDER: optionalText,
+  PECMAILER_IMAP_RECEIPTS_FOLDER: z.string().min(1).default('INBOX'),
+
+  // Sending.
+  PECMAILER_PER_MINUTE: z.coerce.number().int().min(0).max(10_000).default(60),
+  PECMAILER_MAX_MESSAGE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .default(30 * 1024 * 1024),
+  PECMAILER_RETRY_BACKOFF_SECONDS: z
     .string()
-    .regex(/^mongodb(\+srv)?:\/\/.+/, 'must be a mongodb:// or mongodb+srv:// connection string'),
+    .default('60,300,900')
+    .transform((value, ctx) => {
+      const list = value.split(',').map((entry) => Number(entry.trim()));
+      if (list.length === 0 || list.some((entry) => !Number.isInteger(entry) || entry < 1)) {
+        ctx.addIssue({ code: 'custom', message: 'comma-separated positive whole seconds, e.g. 60,300,900' });
 
-  CONFIG_FILE: z.string().min(1).default('./config/pecmailer.yaml'),
-  STORAGE_DIR: z.string().min(1).default('./storage'),
+        return z.NEVER;
+      }
 
-  // Worker only: liveness/readiness probes, and the name it signs leases with.
-  WORKER_HEALTH_PORT: z.coerce.number().int().min(0).max(65_535).default(3001),
-  WORKER_ID: z.string().min(1).max(100).optional(),
+      return list;
+    }),
+  // A PEC delivered again after an interruption: how long to look for its receipt before calling it uncertain.
+  PECMAILER_REDELIVERY_WAIT_SECONDS: z.coerce.number().int().min(0).max(1200).default(300),
+  PECMAILER_UNVERIFIED_RECIPIENTS: z.enum(['reject', 'send']).default('reject'),
+  PECMAILER_PEC_DOMAINS: commaList,
+  PECMAILER_PEC_MX_SUFFIXES: commaList,
+  PECMAILER_NON_PEC_DOMAINS: commaList,
+  PECMAILER_NON_PEC_MX_SUFFIXES: commaList,
 
-  // Local stack only: every mailbox talks to the same fake provider (Greenmail).
-  // Left unset in production, where each mailbox uses its own preset.
-  PECMAILER_SMTP_OVERRIDE_HOST: z.string().min(1).optional(),
-  PECMAILER_SMTP_OVERRIDE_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
-  PECMAILER_SMTP_OVERRIDE_SECURITY: transportSecurity.optional(),
-  PECMAILER_IMAP_OVERRIDE_HOST: z.string().min(1).optional(),
-  PECMAILER_IMAP_OVERRIDE_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
-  PECMAILER_IMAP_OVERRIDE_SECURITY: transportSecurity.optional(),
+  // Receipts.
+  PECMAILER_RECEIPTS_POLL_SECONDS: seconds.min(5).max(3600).default(60),
+  PECMAILER_RECEIPTS_LOOKBACK_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 30)
+    .default(24),
+  PECMAILER_RECEIPTS_MAX_PER_POLL: z.coerce.number().int().min(1).max(1000).default(200),
+
+  // RabbitMQ.
+  RABBITMQ_URL: z
+    .string()
+    .regex(/^amqps?:\/\/.+/, 'must be an amqp:// or amqps:// URL, e.g. amqp://user:password@rabbitmq:5672'),
+  PECMAILER_QUEUE_PREFIX: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9._-]{0,62}$/, 'lower-case letters, digits, ".", "_" and "-"')
+    .default('pecmailer'),
+  PECMAILER_DECLARE_QUEUES: z.stringbool().default(true),
+  PECMAILER_QUEUE_DELIVERY_LIMIT: z.coerce.number().int().min(1).max(100).default(5),
+
+  // Kubernetes probes.
+  HEALTH_HOST: z.string().min(1).default('0.0.0.0'),
+  HEALTH_PORT: z.coerce.number().int().min(0).max(65_535).default(3001),
 });
 
 export type Env = z.output<typeof envSchema>;
-
-export class EnvValidationError extends Error {
-  public constructor(public readonly issues: string) {
-    super(`Invalid environment:\n${issues}`);
-    this.name = 'EnvValidationError';
-  }
-}
-
-/**
- * @param source usually process.env; injectable so tests never touch the real one
- */
-export function parseEnv(source: Readonly<Record<string, string | undefined>>): Env {
-  const result = envSchema.safeParse(source);
-  if (!result.success) {
-    throw new EnvValidationError(z.prettifyError(result.error));
-  }
-
-  return result.data;
-}

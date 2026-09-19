@@ -1,41 +1,68 @@
-# Local environment: docker compose up
+# Local stack: RabbitMQ, Greenmail (a fake PEC provider) and two pecmailer
+# containers, one per mailbox of the tenant "serfin", both sending to Greenmail.
 #
-#   api        http://localhost:3000      Swagger UI on /docs
-#   worker     sends, reads receipts, dispatches notifications
-#   mongo      MongoDB 8 as a single node replica set (transactions, change streams)
-#   greenmail  fake PEC provider: SMTP 3025/3465, IMAP 3143/3993, web UI 8080
+#   docker compose up --build
 #
-# Nothing here reaches a real PEC mailbox. The example config points the
-# "serfin-aruba" mailbox preset at Greenmail through the overrides below.
+#   RabbitMQ page   http://localhost:15672   (user pecmailer, password pecmailer)
+#   Greenmail       http://localhost:8080
+#   probes          http://localhost:3001/health/ready (serfin-aruba), :3002 (serfin-legalmail)
+#
+# Every value here is for this machine only: in Kubernetes each container gets
+# the same variables from a ConfigMap and a Secret.
+
+x-pecmailer: &pecmailer
+  image: pecmailer:local
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  restart: unless-stopped
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    greenmail:
+      condition: service_healthy
+
+x-pecmailer-env: &pecmailer-env
+  LOG_LEVEL: info
+  RABBITMQ_URL: amqp://pecmailer:pecmailer@rabbitmq:5672
+  PECMAILER_TENANT: serfin
+  # Greenmail instead of the provider's servers; it accepts any password.
+  PECMAILER_SMTP_HOST: greenmail
+  PECMAILER_SMTP_PORT: '3025'
+  PECMAILER_SMTP_SECURITY: none
+  PECMAILER_SMTP_PASSWORD: greenmail-accepts-any-password
+  PECMAILER_IMAP_HOST: greenmail
+  PECMAILER_IMAP_PORT: '3143'
+  PECMAILER_IMAP_SECURITY: none
+  # The reserved domain of the examples counts as PEC here, so examples/pec.json goes through;
+  # anywhere else it is refused, and a copied example cannot reach a real person.
+  PECMAILER_PEC_DOMAINS: pec.example
 
 services:
-  mongo:
-    image: mongo:8
-    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: pecmailer
+      RABBITMQ_DEFAULT_PASS: pecmailer
     ports:
-      - '27017:27017'
+      - '5672:5672' # AMQP, for the containers and for `npm run cli` from this machine
+      - '15672:15672' # management page
     volumes:
-      - mongo-data:/data/db
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-pecmailer.conf:ro
+      - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
-      # Initiates the replica set on first run, then reports its health.
-      test:
-        - CMD-SHELL
-        - >-
-          mongosh --quiet --eval "try { rs.status().ok } catch (e) {
-          rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }).ok }"
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
       interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
 
   greenmail:
     image: greenmail/standalone:2.1.4
     environment:
-      # auth.disabled: any login/password is accepted and the user is created on
-      # the fly, so every mailbox declared in config/pecmailer.yaml works here
-      # with the full address as username (as with the real providers) and
-      # whatever MAILBOX_<CODE>_PASSWORD says. Refused logins are covered by
-      # the automated tests, not by this stack.
+      # auth.disabled: any login and password are accepted and the user is
+      # created on the fly, with the full address as username (as with the real
+      # providers). Refused logins are covered by the automated tests.
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all
         -Dgreenmail.hostname=0.0.0.0
@@ -43,10 +70,8 @@ services:
         -Dgreenmail.verbose
     ports:
       - '3025:3025' # SMTP
-      - '3465:3465' # SMTPS
       - '3143:3143' # IMAP
-      - '3993:3993' # IMAPS
-      - '8080:8080' # web UI and REST API
+      - '8080:8080' # web page and REST API
     healthcheck:
       # The image ships no curl or wget; bash's /dev/tcp is enough to see the
       # SMTP and IMAP listeners answer.
@@ -56,70 +81,27 @@ services:
       retries: 12
       start_period: 10s
 
-  api:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: pecmailer:local
-    command: ['node', 'dist/main.api.js']
-    env_file: .env
+  serfin-aruba:
+    <<: *pecmailer
     environment:
-      MONGODB_URI: mongodb://mongo:27017/pecmailer?directConnection=true
-      HTTP_HOST: 0.0.0.0
-      HTTP_PORT: '3000'
-      CONFIG_FILE: /config/pecmailer.yaml
-      STORAGE_DIR: /data/storage
-      LOG_PRETTY: 'false'
+      <<: *pecmailer-env
+      PECMAILER_MAILBOX: serfin-aruba
+      PECMAILER_PROVIDER: aruba
+      PECMAILER_FROM_ADDRESS: solleciti@pec.serfin.example
+      PECMAILER_FROM_NAME: Serfin - Recupero Crediti
     ports:
-      - '3000:3000'
-    volumes:
-      - ./config/pecmailer.yaml:/config/pecmailer.yaml:ro
-      - storage:/data/storage
-    depends_on:
-      mongo:
-        condition: service_healthy
+      - '3001:3001'
 
-  worker:
-    image: pecmailer:local
-    command: ['node', 'dist/main.worker.js']
-    # The worker serves its own probes on WORKER_HEALTH_PORT (see src/app/worker-health.ts).
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3001/health/live').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      start_period: 20s
-      retries: 3
-    env_file: .env
+  serfin-legalmail:
+    <<: *pecmailer
     environment:
-      MONGODB_URI: mongodb://mongo:27017/pecmailer?directConnection=true
-      CONFIG_FILE: /config/pecmailer.yaml
-      STORAGE_DIR: /data/storage
-      LOG_PRETTY: 'false'
-      WORKER_HEALTH_PORT: '3001'
-      # Greenmail stands in for every provider on the local stack.
-      PECMAILER_SMTP_OVERRIDE_HOST: greenmail
-      PECMAILER_SMTP_OVERRIDE_PORT: '3025'
-      PECMAILER_SMTP_OVERRIDE_SECURITY: none
-      PECMAILER_IMAP_OVERRIDE_HOST: greenmail
-      PECMAILER_IMAP_OVERRIDE_PORT: '3143'
-      PECMAILER_IMAP_OVERRIDE_SECURITY: none
+      <<: *pecmailer-env
+      PECMAILER_MAILBOX: serfin-legalmail
+      PECMAILER_PROVIDER: legalmail
+      PECMAILER_FROM_ADDRESS: avvisi@legalmail.serfin.example
+      PECMAILER_FROM_NAME: Serfin - Avvisi
     ports:
-      - '3001:3001' # worker health probes
-    volumes:
-      - ./config/pecmailer.yaml:/config/pecmailer.yaml:ro
-      - storage:/data/storage
-    depends_on:
-      mongo:
-        condition: service_healthy
-      greenmail:
-        condition: service_healthy
-      api:
-        condition: service_started
+      - '3002:3001'
 
 volumes:
-  mongo-data:
-  storage:
+  rabbitmq-data:

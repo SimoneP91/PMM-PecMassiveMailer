@@ -4,10 +4,10 @@ import { ImapFlow } from 'imapflow';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { Secret } from '../../src/common/security/secret';
-import { asMailboxCode, asTenantId } from '../../src/common/types/branded';
-import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config.loader';
+import type { ResolvedImap } from '../../src/config/config';
 import { mayBeReceipt } from '../../src/modules/receipts/receipt-parser';
 import { ImapflowReceiptSourceFactory, type ReadPosition } from '../../src/modules/receipts/receipt-source';
+import { testMailbox } from '../helpers/mailbox';
 import { buildEnvelope, buildReceipt } from '../helpers/receipts';
 
 /**
@@ -64,10 +64,7 @@ interface Read {
 
 /** Reads like the worker does: the body only when the headers say it may be a receipt. */
 async function read(imap: ResolvedImap, position: Partial<ReadPosition> = {}): Promise<Read> {
-  const source = new ImapflowReceiptSourceFactory().create(
-    { code: asMailboxCode('it'), tenantId: asTenantId('t_it') } as ResolvedMailbox,
-    imap,
-  );
+  const source = new ImapflowReceiptSourceFactory().create(testMailbox(), imap);
   let uidValidity: string | undefined;
   const mails: Read['mails'] = [];
   await source.read(

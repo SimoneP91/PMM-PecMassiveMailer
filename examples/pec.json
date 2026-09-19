@@ -1,0 +1,8 @@
+{
+  "reference": "pratica-4521",
+  "batch": "prova-locale",
+  "to": { "address": "destinatario@pec.example", "name": "Mario Rossi" },
+  "subject": "Sollecito pratica 4521",
+  "html": "<p>Gentile Mario Rossi,</p><p>le inviamo in allegato il sollecito relativo alla pratica 4521.</p>",
+  "attachments": [{ "path": "sollecito.pdf" }]
+}

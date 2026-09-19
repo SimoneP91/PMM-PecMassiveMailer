@@ -1,13 +1,13 @@
 import { randomBytes } from 'node:crypto';
 
-import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config.loader';
-import {
-  ReceiptSourceAuthError,
-  type ReadPosition,
-  type ReceiptSource,
-  type ReceiptSourceFactory,
-  type SourceMail,
+import type { ResolvedImap, ResolvedMailbox } from '../../src/config/config';
+import type {
+  ReadPosition,
+  ReceiptSource,
+  ReceiptSourceFactory,
+  SourceMail,
 } from '../../src/modules/receipts/receipt-source';
+import { ImapAuthError } from '../../src/modules/sending/imap/imap-auth-error';
 
 export type RicevutaKind =
   | 'accettazione'
@@ -197,7 +197,7 @@ export class FakeReceiptSourceFactory implements ReceiptSourceFactory {
       ): Promise<void> => {
         this.fetches += 1;
         if (this.refuseLogin) {
-          throw new ReceiptSourceAuthError('IMAP login refused');
+          throw new ImapAuthError();
         }
         const resume = position.uidValidity === this.uidValidity;
         const mails = (this.folders.get(mailbox.code) ?? [])

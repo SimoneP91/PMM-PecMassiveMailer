@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
 import { ImapFlow } from 'imapflow';
 
-import type { ResolvedImap, ResolvedMailbox } from '../../config/config.loader';
+import type { ResolvedImap, ResolvedMailbox } from '../../config/config';
+import { ImapAuthError, isImapAuthFailure } from '../sending/imap/imap-auth-error';
 
 /** One mail of the folder, before its body is downloaded. */
 export interface SourceMail {
@@ -30,14 +30,6 @@ export interface ReadPosition {
   readonly max: number;
 }
 
-/** The login was refused: the mailbox must be suspended, not retried. */
-export class ReceiptSourceAuthError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = 'ReceiptSourceAuthError';
-  }
-}
-
 /**
  * Where receipts are read from. Behind an interface so the reading loop is
  * tested without an IMAP server; the imapflow implementation is tested
@@ -62,8 +54,6 @@ export interface ReceiptSourceFactory {
   create(mailbox: ResolvedMailbox, imap: ResolvedImap): ReceiptSource;
 }
 
-export const RECEIPT_SOURCE_FACTORY = Symbol('RECEIPT_SOURCE_FACTORY');
-
 class ImapflowReceiptSource implements ReceiptSource {
   public constructor(private readonly imap: ResolvedImap) {}
 
@@ -83,10 +73,7 @@ class ImapflowReceiptSource implements ReceiptSource {
     try {
       await client.connect();
     } catch (error: unknown) {
-      if ((error as { authenticationFailed?: unknown }).authenticationFailed === true) {
-        throw new ReceiptSourceAuthError('IMAP login refused');
-      }
-      throw error;
+      throw isImapAuthFailure(error) ? new ImapAuthError() : error;
     }
 
     try {
@@ -144,7 +131,6 @@ class ImapflowReceiptSource implements ReceiptSource {
   }
 }
 
-@Injectable()
 export class ImapflowReceiptSourceFactory implements ReceiptSourceFactory {
   public create(_mailbox: ResolvedMailbox, imap: ResolvedImap): ReceiptSource {
     return new ImapflowReceiptSource(imap);

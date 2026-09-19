@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Clock } from '../../../src/common/time/clock';
-import type { ResolvedConfig } from '../../../src/config/config.loader';
 import { RecipientVerifier } from '../../../src/modules/recipients/recipient-verifier';
 import { containing } from '../../helpers/matchers';
 import { FakeMxResolver } from '../../helpers/fake-mx';
-import { defaultSections } from '../../helpers/config-sections';
 
 class FakeClock implements Clock {
   public constructor(public current = new Date('2026-09-19T10:00:00Z')) {}
@@ -19,23 +17,18 @@ class FakeClock implements Clock {
   }
 }
 
-const config: ResolvedConfig = {
-  tenants: [],
-  mailboxes: [],
-  ...defaultSections(),
-  recipients: {
-    pecDomains: ['pec.custom.example'],
-    pecMxSuffixes: ['mx.provider.example'],
-    nonPecDomains: [],
-    nonPecMxSuffixes: [],
-  },
+const lists = {
+  pecDomains: ['pec.custom.example'],
+  pecMxSuffixes: ['mx.provider.example'],
+  nonPecDomains: [],
+  nonPecMxSuffixes: [],
 };
 
 function setup(): { verifier: RecipientVerifier; mx: FakeMxResolver; clock: FakeClock } {
   const mx = new FakeMxResolver();
   const clock = new FakeClock();
 
-  return { verifier: new RecipientVerifier(config, clock, mx), mx, clock };
+  return { verifier: new RecipientVerifier(lists, clock, mx), mx, clock };
 }
 
 describe('RecipientVerifier', () => {

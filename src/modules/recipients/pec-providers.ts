@@ -9,9 +9,9 @@
  *
  * These lists are a starting point compiled from the providers the legacy
  * project and its delivery history dealt with. They are NOT authoritative:
- * the reference is the AgID registry of accredited providers, and both lists
- * can be extended in the configuration file (recipients.pecDomains,
- * recipients.pecMxSuffixes). A domain that matches nothing is UNDETERMINED,
+ * the reference is the AgID registry of accredited providers, and every list
+ * can be extended per container (PECMAILER_PEC_DOMAINS,
+ * PECMAILER_PEC_MX_SUFFIXES and their NON_PEC counterparts). A domain that matches nothing is UNDETERMINED,
  * never silently PEC.
  */
 

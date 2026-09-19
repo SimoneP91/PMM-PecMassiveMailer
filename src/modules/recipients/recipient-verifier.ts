@@ -1,10 +1,7 @@
 import { promises as dns } from 'node:dns';
 
-import { Inject, Injectable } from '@nestjs/common';
-
-import { CLOCK, type Clock } from '../../common/time/clock';
-import { PECMAILER_CONFIG } from '../../config/config.module';
-import type { ResolvedConfig } from '../../config/config.loader';
+import type { Clock } from '../../common/time/clock';
+import type { RecipientLists } from '../../config/config';
 import {
   DEFAULT_NON_PEC_DOMAINS,
   DEFAULT_NON_PEC_MX_SUFFIXES,
@@ -30,8 +27,6 @@ export interface MxResolver {
   resolveMx(domain: string): Promise<readonly MxRecord[]>;
 }
 
-export const MX_RESOLVER = Symbol('MX_RESOLVER');
-
 export class SystemMxResolver implements MxResolver {
   private readonly resolver = new dns.Resolver({ timeout: 3_000, tries: 2 });
 
@@ -55,7 +50,6 @@ interface CacheEntry {
  * Classifies the domain of an address. Results are cached per domain: a
  * batch of a thousand rows usually spans a few dozen domains.
  */
-@Injectable()
 export class RecipientVerifier {
   private readonly pecDomains: readonly string[];
   private readonly pecMxSuffixes: readonly string[];
@@ -64,14 +58,14 @@ export class RecipientVerifier {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, Promise<RecipientVerification>>();
   public constructor(
-    @Inject(PECMAILER_CONFIG) config: ResolvedConfig,
-    @Inject(CLOCK) private readonly clock: Clock,
-    @Inject(MX_RESOLVER) private readonly resolver: MxResolver,
+    lists: RecipientLists,
+    private readonly clock: Clock,
+    private readonly resolver: MxResolver,
   ) {
-    this.pecDomains = [...DEFAULT_PEC_DOMAINS, ...config.recipients.pecDomains];
-    this.pecMxSuffixes = [...DEFAULT_PEC_MX_SUFFIXES, ...config.recipients.pecMxSuffixes];
-    this.nonPecDomains = [...DEFAULT_NON_PEC_DOMAINS, ...config.recipients.nonPecDomains];
-    this.nonPecMxSuffixes = [...DEFAULT_NON_PEC_MX_SUFFIXES, ...config.recipients.nonPecMxSuffixes];
+    this.pecDomains = [...DEFAULT_PEC_DOMAINS, ...lists.pecDomains];
+    this.pecMxSuffixes = [...DEFAULT_PEC_MX_SUFFIXES, ...lists.pecMxSuffixes];
+    this.nonPecDomains = [...DEFAULT_NON_PEC_DOMAINS, ...lists.nonPecDomains];
+    this.nonPecMxSuffixes = [...DEFAULT_NON_PEC_MX_SUFFIXES, ...lists.nonPecMxSuffixes];
   }
 
   public async verify(address: string): Promise<RecipientVerification> {
