@@ -16,6 +16,8 @@ Node 24 · TypeScript 5.9 (strict, no `any`) · RabbitMQ through rabbitmq-client
 
 ## Quick start
 
+On a machine that has never run it: [docs/en/getting-started.md](docs/en/getting-started.md) has the prerequisites, the first test PEC and what to do when something does not start.
+
 ```bash
 npm install
 docker compose up --build

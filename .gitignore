@@ -21,5 +21,3 @@ data/
 .DS_Store
 Thumbs.db
 
-#Local documentation
-documentation.md

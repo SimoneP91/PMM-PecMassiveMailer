@@ -16,6 +16,8 @@ Node 24 · TypeScript 5.9 (rigoroso, nessun `any`) · RabbitMQ tramite rabbitmq-
 
 ## Avvio rapido
 
+Su una macchina che non l'ha mai fatto girare: [docs/it/avvio.md](docs/it/avvio.md) elenca cosa serve, la prima PEC di prova e cosa fare se qualcosa non parte.
+
 ```bash
 npm install
 docker compose up --build
