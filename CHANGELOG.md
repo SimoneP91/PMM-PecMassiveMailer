@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Added
 
+- A guide for the CRM side and its AI assistant, in Italian and English (docs/it/guida-crm.md, docs/en/crm-guide.md): the contract in full, the rules, the states of a PEC, reference PHP code (tables, publisher with confirms, outcome reader, periodic checks), sample events for tests, local trials.
 - A getting-started guide for a machine that never ran the project, in English and Italian (prerequisites, first test PEC, automated tests, what to do when something does not start); every command in it was run on a fresh clone.
 - `CLAUDE.md`: what an AI assistant must know before working in this repository (what must never break, the commands, the layout, the conventions and the traps).
 - A unit test of the real SMTP client against a real SMTP dialogue (smtp-server in the test process): a connection cut after the server took the message is `stuck`, a refused login suspends, 5xx fails, 4xx retries. Its test server had been left unused since the move to queues.
@@ -16,6 +17,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Changed
 
+- Guides: the PHP publishing example sets `mandatory` and waits for returns too: published to a queue that does not exist, a PEC came back as confirmed and vanished.
 - ADR 0001 to 0005 marked as superseded by ADR 0006; kept as the record of the first design.
 - Documentation brought up to 0.6.1: README (status, provider presets, collaudo on a real mailbox), SECURITY.md (recipient checks, redelivery, secrets on a developer's machine), ADR 0006 (amendments of 0.6.1), the guides (who creates the queues, what ends up in `.dead`).
 

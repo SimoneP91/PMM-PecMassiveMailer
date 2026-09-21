@@ -6,6 +6,8 @@ Each container serves one tenant and one of its mailboxes. Serfin with three mai
 
 The formal description, readable by programs, is [docs/asyncapi.yaml](../asyncapi.yaml); pasted into AsyncAPI Studio (studio.asyncapi.com) it renders as a page. This guide says the same in words.
 
+Whoever writes the CRM side, person or AI assistant, finds all it needs in [crm-guide.md](crm-guide.md): tables, the states of a PEC, reference code, tests.
+
 ## The queues
 
 | Queue                               | Written by                                                                               | Read by                              |
@@ -76,7 +78,7 @@ The addresses in the examples are made up, on `.example` domains the service wou
 
 ### From PHP
 
-With `php-amqplib` (`composer require php-amqplib/php-amqplib`). RabbitMQ confirms every message it has stored; without the confirmation the PEC is not in the queue and must be published again.
+With `php-amqplib` (`composer require php-amqplib/php-amqplib`). RabbitMQ confirms every message it has stored; when it says no, the PEC is not in the queue and must be published again with the same id. The complete code, with the database and every case, is in [crm-guide.md](crm-guide.md).
 
 ```php
 <?php
@@ -89,6 +91,9 @@ $connection = new AMQPStreamConnection('rabbitmq', 5672, 'serfin', getenv('RABBI
 $channel = $connection->channel();
 $channel->set_nack_handler(function (AMQPMessage $message): void {
     throw new RuntimeException('RabbitMQ did not store PEC ' . $message->get('message_id'));
+});
+$channel->set_return_listener(function (): void {
+    throw new RuntimeException('No such queue: the PEC was not stored');
 });
 $channel->confirm_select();
 
@@ -112,8 +117,9 @@ $channel->basic_publish(
     ]),
     '',                                 // no exchange: the queue is named directly
     'pecmailer.serfin.serfin-aruba.in',
+    true,                               // when the queue does not exist, the message comes back instead of vanishing
 );
-$channel->wait_for_pending_acks(5.0);
+$channel->wait_for_pending_acks_returns(5.0);
 
 $channel->close();
 $connection->close();

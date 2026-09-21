@@ -2,7 +2,7 @@ asyncapi: 3.1.0
 id: urn:pecmailer
 info:
   title: pecmailer
-  version: 0.6.0
+  version: 0.6.1
   description: |
     A PEC (Italian certified e-mail) sending service. One container serves one
     tenant and one of its mailboxes, and keeps nothing: the queues are its

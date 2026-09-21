@@ -2,7 +2,7 @@
 
 Spedisce PEC per conto di applicazioni clienti. Ogni container serve un cliente e una sua casella: prende le PEC da una coda di ingresso, le spedisce tramite il gestore e mette in una coda di uscita cosa è successo, cioè l'esito e poi ogni ricevuta. Non conserva niente: chi riempie e svuota le code tiene i dati, gli allegati e le ricevute.
 
-Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messaggi.md) ([inglese](docs/en/messages.md)). Il contratto formale: [docs/asyncapi.yaml](docs/asyncapi.yaml).
+Come si usa, a parole e con esempi in PHP: [docs/it/messaggi.md](docs/it/messaggi.md) ([inglese](docs/en/messages.md)). Per chi scrive la parte del CRM, persona o assistente AI: [docs/it/guida-crm.md](docs/it/guida-crm.md) ([inglese](docs/en/crm-guide.md)). Il contratto formale: [docs/asyncapi.yaml](docs/asyncapi.yaml).
 
 ## Stato
 

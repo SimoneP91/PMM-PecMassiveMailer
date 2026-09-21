@@ -6,6 +6,8 @@ Ogni container serve un cliente e una sua casella. Serfin con tre caselle ha tre
 
 La descrizione formale, leggibile dai programmi, è in [docs/asyncapi.yaml](../asyncapi.yaml). Per vederla come pagina si può incollare in AsyncAPI Studio (studio.asyncapi.com). Questa guida dice le stesse cose a parole.
 
+Chi scrive la parte del CRM, persona o assistente AI, trova tutto il necessario in [guida-crm.md](guida-crm.md): tabelle, stati di una PEC, codice di riferimento, prove.
+
 ## Le code
 
 | Coda                                 | Chi scrive                                                                                            | Chi legge                               |
@@ -76,7 +78,7 @@ Gli indirizzi degli esempi sono inventati, su domini `.example` che il servizio 
 
 ### Da PHP
 
-Con la libreria `php-amqplib` (`composer require php-amqplib/php-amqplib`). RabbitMQ conferma ogni messaggio che ha salvato; se non lo conferma, la PEC non è in coda e va ripubblicata.
+Con la libreria `php-amqplib` (`composer require php-amqplib/php-amqplib`). RabbitMQ conferma ogni messaggio che ha salvato; se dice di no, la PEC non è in coda e va ripubblicata con lo stesso id. Il codice completo, con il database e tutti i casi, è in [guida-crm.md](guida-crm.md).
 
 ```php
 <?php
@@ -89,6 +91,9 @@ $connection = new AMQPStreamConnection('rabbitmq', 5672, 'serfin', getenv('RABBI
 $channel = $connection->channel();
 $channel->set_nack_handler(function (AMQPMessage $message): void {
     throw new RuntimeException('RabbitMQ non ha salvato la PEC ' . $message->get('message_id'));
+});
+$channel->set_return_listener(function (): void {
+    throw new RuntimeException('La coda non esiste: la PEC non è stata salvata');
 });
 $channel->confirm_select();
 
@@ -112,8 +117,9 @@ $channel->basic_publish(
     ]),
     '',                                 // nessuno smistatore: la coda si indica per nome
     'pecmailer.serfin.serfin-aruba.in',
+    true,                               // se la coda non esiste, il messaggio torna indietro invece di sparire
 );
-$channel->wait_for_pending_acks(5.0);
+$channel->wait_for_pending_acks_returns(5.0);
 
 $channel->close();
 $connection->close();

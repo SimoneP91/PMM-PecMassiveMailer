@@ -2,7 +2,7 @@
 
 Sends PEC (Italian certified e-mail) for client applications. One container serves one tenant and one of its mailboxes: it takes PECs from an input queue, sends them through the provider, and puts what happened (the outcome, then every receipt) on an output queue. It keeps nothing: whoever fills and empties the queues keeps the records, the attachments and the receipts.
 
-How to use it, in words and with PHP examples: [docs/en/messages.md](docs/en/messages.md) ([Italian](docs/it/messaggi.md)). The formal contract: [docs/asyncapi.yaml](docs/asyncapi.yaml).
+How to use it, in words and with PHP examples: [docs/en/messages.md](docs/en/messages.md) ([Italian](docs/it/messaggi.md)). For whoever writes the CRM side, person or AI assistant: [docs/en/crm-guide.md](docs/en/crm-guide.md) ([Italian](docs/it/guida-crm.md)). The formal contract: [docs/asyncapi.yaml](docs/asyncapi.yaml).
 
 ## Status
 
