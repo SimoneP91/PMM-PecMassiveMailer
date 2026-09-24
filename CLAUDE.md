@@ -40,6 +40,7 @@ src/modules/recipients/  is this address a PEC address
 src/modules/templates/   the HTML rules; modules/attachments/ the attachment types
 test/unit  test/integration  test/helpers  test/fixtures (real Aruba receipts, anonymised)
 docs/      asyncapi.yaml (the contract), guides and ADRs in en/ and it/
+deploy/    production on one server with Docker Compose, and the procedure for whoever installs it
 ```
 
 ## Conventions

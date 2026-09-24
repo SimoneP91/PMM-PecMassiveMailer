@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Added
 
+- Production on one server with Docker Compose (`deploy/`), with the pecmailer image pulled from the company's container registry: the compose file, the RabbitMQ settings, the template of `.env`, the procedure for whoever installs it, and how a version is published to the registry, in English and Italian. Unlike the local stack: a two-minute stop grace period, every service restarting with Docker, a fixed RabbitMQ host name (without it a recreated broker starts with empty queues), read-only file system, rotated logs, the management page and the probes on 127.0.0.1 only. Smoke-tested with Greenmail in place of the provider.
 - A guide for the CRM side and its AI assistant, in Italian and English (docs/it/guida-crm.md, docs/en/crm-guide.md): the contract in full, the rules, the states of a PEC, reference PHP code (tables, publisher with confirms, outcome reader, periodic checks), sample events for tests, local trials.
 - A getting-started guide for a machine that never ran the project, in English and Italian (prerequisites, first test PEC, automated tests, what to do when something does not start); every command in it was run on a fresh clone.
 - `CLAUDE.md`: what an AI assistant must know before working in this repository (what must never break, the commands, the layout, the conventions and the traps).

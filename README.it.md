@@ -76,13 +76,16 @@ src/
   common/        log, segreti, orologio
 test/            unit/ integration/ helpers/ fixtures/ (ricevute vere di Aruba, anonimizzate)
 docker/          Dockerfile, impostazioni di RabbitMQ
+deploy/          la produzione su un server con Docker Compose
 docs/            contratto, guide, decisioni (en/it)
 examples/        una PEC e le impostazioni per provare lo stack locale
 ```
 
 ## Messa in produzione
 
-Un Deployment per ogni coppia cliente-casella, con una sola copia: la coda di ingresso lascia comunque prendere le PEC a un solo lettore alla volta. Variabili da una ConfigMap, e da un Secret per la password della casella e `RABBITMQ_URL`. Sonde `/health/live` e `/health/ready` sulla porta 3001; la prontezza è falsa finché la casella è sospesa per una password rifiutata, la vitalità solo quando una gestione è bloccata. `terminationGracePeriodSeconds: 120`: allo stop il container finisce la PEC che ha in mano, entro i tempi massimi di SMTP. Nessun volume: il file system può essere in sola lettura.
+**Docker Compose su un server**: [deploy/](deploy/README.it.md) contiene il file compose, le impostazioni di RabbitMQ, il modello di `.env` e la procedura per chi installa. RabbitMQ con un nome host fisso, un container per casella, due minuti per fermarsi, file system in sola lettura, log a rotazione.
+
+**Kubernetes**: un Deployment per ogni coppia cliente-casella, con una sola copia: la coda di ingresso lascia comunque prendere le PEC a un solo lettore alla volta. Variabili da una ConfigMap, e da un Secret per la password della casella e `RABBITMQ_URL`. Sonde `/health/live` e `/health/ready` sulla porta 3001; la prontezza è falsa finché la casella è sospesa per una password rifiutata, la vitalità solo quando una gestione è bloccata. `terminationGracePeriodSeconds: 120`: allo stop il container finisce la PEC che ha in mano, entro i tempi massimi di SMTP. Nessun volume: il file system può essere in sola lettura.
 
 Il container crea le sue code all'avvio. Se l'infrastruttura preferisce crearle lei, usa gli stessi parametri (vedi [docs/asyncapi.yaml](docs/asyncapi.yaml)) e imposta `PECMAILER_DECLARE_QUEUES=false`.
 

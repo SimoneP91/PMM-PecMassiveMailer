@@ -76,13 +76,16 @@ src/
   common/        logger, secrets, clock
 test/            unit/ integration/ helpers/ fixtures/ (real Aruba receipts, anonymised)
 docker/          Dockerfile, RabbitMQ settings
+deploy/          production on one server with Docker Compose
 docs/            contract, guides, decisions (en/it)
 examples/        a PEC and the settings to try the local stack
 ```
 
 ## Deploying
 
-One Deployment per tenant and mailbox, one replica: the input queue lets only one consumer take PECs at a time anyway. Variables from a ConfigMap, and from a Secret for the mailbox password and `RABBITMQ_URL`. Probes `/health/live` and `/health/ready` on port 3001; readiness is false while the mailbox is suspended (a refused password), liveness only when a handling is stuck. `terminationGracePeriodSeconds: 120`: on SIGTERM the container finishes the PEC in hand, and the SMTP timeouts bound that. No volume: the file system can be read-only.
+**Docker Compose on one server**: [deploy/](deploy/README.md) holds the compose file, the RabbitMQ settings, the template of `.env` and the procedure for whoever installs it (in Italian too). RabbitMQ with a fixed host name, one container per mailbox, a stop grace period of two minutes, a read-only file system, rotated logs.
+
+**Kubernetes**: one Deployment per tenant and mailbox, one replica: the input queue lets only one consumer take PECs at a time anyway. Variables from a ConfigMap, and from a Secret for the mailbox password and `RABBITMQ_URL`. Probes `/health/live` and `/health/ready` on port 3001; readiness is false while the mailbox is suspended (a refused password), liveness only when a handling is stuck. `terminationGracePeriodSeconds: 120`: on SIGTERM the container finishes the PEC in hand, and the SMTP timeouts bound that. No volume: the file system can be read-only.
 
 The container declares its queues at start-up. When the infrastructure prefers to create them, it uses the same arguments (see [docs/asyncapi.yaml](docs/asyncapi.yaml)) and sets `PECMAILER_DECLARE_QUEUES=false`.
 
