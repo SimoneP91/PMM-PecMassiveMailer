@@ -1,23 +1,23 @@
-# Real Aruba PEC receipts
+# Ricevute PEC Aruba vere
 
-Captured during the first collaudo on a real Aruba PEC mailbox, 19 September 2026: a batch of two messages, one to the sender's own mailbox (with a PDF attachment), one to an address that does not exist on `pec.it`.
+Raccolte durante il primo collaudo su una casella PEC Aruba vera, il 19 settembre 2026: un lotto di due messaggi, uno alla casella stessa del mittente (con un PDF allegato), uno a un indirizzo inesistente su `pec.it`.
 
-| File                           | What it is                                                                                                                                          | `X-Ricevuta` / `X-Trasporto`     |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `accettazione.eml`             | Acceptance of message 1                                                                                                                             | `accettazione`                   |
-| `avvenuta-consegna.eml`        | Delivery of message 1, complete: carries the original message (`postacert.eml`) with its PDF                                                        | `avvenuta-consegna`              |
-| `accettazione-inesistente.eml` | Acceptance of message 2                                                                                                                             | `accettazione`                   |
-| `errore-consegna.eml`          | Non-delivery of message 2: `errore="altro"`, `5.1.1 - ARUBA PEC S.p.A. - indirizzo non valido`                                                      | `errore-consegna`                |
-| `busta-trasporto.eml`          | Message 1 as it reached the recipient's inbox: a transport envelope, which carries `X-Riferimento-Message-ID` too and must never count as a receipt | `X-Trasporto: posta-certificata` |
+| File                           | Cos'è                                                                                                                                                                              | `X-Ricevuta` / `X-Trasporto`     |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `accettazione.eml`             | Accettazione del messaggio 1                                                                                                                                                       | `accettazione`                   |
+| `avvenuta-consegna.eml`        | Consegna del messaggio 1, completa: contiene il messaggio originale (`postacert.eml`) con il suo PDF                                                                               | `avvenuta-consegna`              |
+| `accettazione-inesistente.eml` | Accettazione del messaggio 2                                                                                                                                                       | `accettazione`                   |
+| `errore-consegna.eml`          | Mancata consegna del messaggio 2: `errore="altro"`, `5.1.1 - ARUBA PEC S.p.A. - indirizzo non valido`                                                                              | `errore-consegna`                |
+| `busta-trasporto.eml`          | Il messaggio 1 come è arrivato nella casella del destinatario: una busta di trasporto, che porta anch'essa `X-Riferimento-Message-ID` e non deve mai essere presa per una ricevuta | `X-Trasporto: posta-certificata` |
 
-## Anonymised
+## Anonimizzate
 
-The sender's address and name were replaced (`mittente@pec.example`, "Mittente Collaudo") in every header and every text part, decoding base64 and quoted-printable parts and encoding them again. Every IPv4 address but loopback became a documentation address (`192.0.2.x`). Nothing else was changed: structure, boundaries, Aruba's headers and Message-IDs, the daticert and the PDF are as received.
+L'indirizzo e il nome del mittente sono stati sostituiti (`mittente@pec.example`, "Mittente Collaudo") in ogni intestazione e in ogni parte di testo, decodificando le parti base64 e quoted-printable e ricodificandole. Ogni indirizzo IPv4 tranne il loopback è diventato un indirizzo di documentazione (`192.0.2.x`). Nient'altro è stato cambiato: struttura, delimitatori, intestazioni e Message-ID di Aruba, il daticert e il PDF sono come sono arrivati.
 
-The provider's S/MIME signature therefore no longer matches the content. This service keeps signatures without verifying them, so the fixtures still exercise everything it does.
+La firma S/MIME del gestore quindi non corrisponde più al contenuto. Il servizio conserva le firme senza verificarle, quindi queste ricevute esercitano comunque tutto quello che fa.
 
-Lessons from these receipts, now covered by tests:
+Cosa hanno insegnato, ora coperto dai test:
 
-- Aruba reports a non-existent mailbox with `errore="altro"`, not `no-dest`: the detail (`errore-esteso`) is what tells the reason.
-- The transport envelope carries `X-Riferimento-Message-ID` pointing at our message: only the `X-Trasporto` check keeps it from being taken for a receipt.
-- The daticert time has one-second precision.
+- Aruba segnala una casella inesistente con `errore="altro"`, non con `no-dest`: il motivo sta nel dettaglio (`errore-esteso`).
+- La busta di trasporto porta `X-Riferimento-Message-ID` che punta al nostro messaggio: solo il controllo su `X-Trasporto` impedisce di prenderla per una ricevuta.
+- L'orario del daticert ha la precisione di un secondo.

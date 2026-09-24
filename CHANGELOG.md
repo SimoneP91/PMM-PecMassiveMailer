@@ -6,21 +6,25 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ### Added
 
-- Production on one server with Docker Compose (`deploy/`), with the pecmailer image pulled from the company's container registry: the compose file, the RabbitMQ settings, the template of `.env`, the procedure for whoever installs it, and how a version is published to the registry, in English and Italian. Unlike the local stack: a two-minute stop grace period, every service restarting with Docker, a fixed RabbitMQ host name (without it a recreated broker starts with empty queues), read-only file system, rotated logs, the management page and the probes on 127.0.0.1 only. Smoke-tested with Greenmail in place of the provider.
-- A guide for the CRM side and its AI assistant, in Italian and English (docs/it/guida-crm.md, docs/en/crm-guide.md): the contract in full, the rules, the states of a PEC, reference PHP code (tables, publisher with confirms, outcome reader, periodic checks), sample events for tests, local trials.
-- A getting-started guide for a machine that never ran the project, in English and Italian (prerequisites, first test PEC, automated tests, what to do when something does not start); every command in it was run on a fresh clone.
-- `CLAUDE.md`: what an AI assistant must know before working in this repository (what must never break, the commands, the layout, the conventions and the traps).
+- Production (`deploy/`): a Docker Compose for one server, with the pecmailer image pulled from the company's container registry, and the procedure for IT, including what the Kubernetes manifests need. Unlike the local stack: a two-minute stop grace period, every service restarting with Docker, a fixed RabbitMQ host name (without it a recreated broker starts with empty queues), read-only file system, rotated logs, the management page and the probes on 127.0.0.1 only. Smoke-tested with Greenmail in place of the provider: sending, an orderly stop, a queued PEC surviving a recreated and a killed broker, pulling from a test registry, a version update and going back.
+- The guide for the CRM side and its AI assistant (`docs/guida-crm.md`): the contract in full, the rules, the states of a PEC, reference PHP code (tables, publisher with confirms, outcome reader, periodic checks), sample events for tests, local trials.
+- `CLAUDE.md`: what an AI assistant must know before working in this repository.
 - A unit test of the real SMTP client against a real SMTP dialogue (smtp-server in the test process): a connection cut after the server took the message is `stuck`, a refused login suspends, 5xx fails, 4xx retries. Its test server had been left unused since the move to queues.
+
+### Changed
+
+- Documentation reorganised into one document per audience, in Italian except the README: `README.md` (the project, in English), `docs/guida-crm.md` (the CRM side), `deploy/README.md` (IT), `docs/tecnica.md` (development: architecture, decisions, traps, tests, first run on a new machine, security controls). Removed: `documentation.md`, `SECURITY.md`, `README.it.md`, the message guides, the getting-started guides and ADR 0001 to 0006; what still holds is in `docs/tecnica.md`, the rest stays in the git history.
+- Legalmail preset proven by real sends (21 September 2026): SMTP 465 with TLS, IMAP 993, Sent folder `INBOX/Spedite`, login with the `M...` account code.
+- CRM guide: the `id` is a new UUID for every sending and the CRM's record goes in `reference` (a reused id can make a PEC that never left look sent); the "stuck in the queue" alert threshold depends on the mailbox's pace; what to do when RabbitMQ's disk is lost; the meaning of every `rejected` code.
+- Guides: the PHP publishing example sets `mandatory` and waits for returns too: published to a queue that does not exist, a PEC came back as confirmed and vanished.
 
 ### Removed
 
 - Leftovers of the HTTP/MongoDB version in `.gitignore` and `.dockerignore` (configuration file, storage folder, openapi.json).
 
-### Changed
+### Security
 
-- Guides: the PHP publishing example sets `mandatory` and waits for returns too: published to a queue that does not exist, a PEC came back as confirmed and vanished.
-- ADR 0001 to 0005 marked as superseded by ADR 0006; kept as the record of the first design.
-- Documentation brought up to 0.6.1: README (status, provider presets, collaudo on a real mailbox), SECURITY.md (recipient checks, redelivery, secrets on a developer's machine), ADR 0006 (amendments of 0.6.1), the guides (who creates the queues, what ends up in `.dead`).
+- Documented that a per-tenant RabbitMQ user limits reading and declaring queues but not publishing: PECs go through the default exchange, whose write permission covers every queue. With several tenants on one broker, one virtual host per tenant.
 
 ## [0.6.1] - 2026-09-19
 

@@ -24,8 +24,8 @@ export interface ProviderPreset {
  * - Aruba: proven by real sends from this service (19 September 2026).
  * - Legalmail: servers and port as InfoCert publishes them for mail clients
  *   (SMTP 465 with TLS: port 25 is often blocked on the way out of cloud
- *   networks); login and Sent folder from the legacy project. Not yet proven
- *   by a send from this service.
+ *   networks); the login is the M... account code. Proven by real sends from
+ *   this service (21 September 2026).
  * - Namirial (sicurezzapostale.it): servers as Namirial publishes them; the
  *   Sent folder is not known, so PECMAILER_IMAP_SENT_FOLDER is required.
  *

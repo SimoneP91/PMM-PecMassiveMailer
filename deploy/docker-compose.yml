@@ -1,0 +1,93 @@
+# pecmailer in production, with Docker Compose on one server: RabbitMQ and
+# one pecmailer container per PEC mailbox. The pecmailer image comes ready
+# from the company's container registry; this folder and a .env next to this
+# file (copy .env.example) are all the server needs. README.md tells the
+# whole procedure, and how a version is published to the registry.
+#
+#   docker login <registry>                       with a read-only credential
+#   cp .env.example .env && chmod 600 .env        then fill it in
+#   docker compose config --quiet                 every required value is set
+#   docker compose pull
+#   docker compose run --rm --no-deps legalmail node dist/main.cli.js probe
+#   docker compose up -d --wait
+#
+# What differs from the local docker-compose.yml of the repository, on purpose:
+# no Greenmail and the provider's real servers; a stop grace period long
+# enough to finish the PEC in hand; every service restarts with the server;
+# a fixed RabbitMQ host name, or its data would be lost on recreation;
+# read-only file system; rotated logs; the RabbitMQ page and the probes
+# reachable from the server only.
+
+name: pecmailer
+
+x-logging: &logging
+  # Rotated: Docker's default keeps every line and fills the disk in the end.
+  # With Graylog, the gelf driver can replace this (README.md).
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '5'
+
+x-pecmailer: &pecmailer
+  # The image published to the registry, with its version, named in .env: the
+  # server runs exactly what was published, and builds nothing.
+  image: ${PECMAILER_IMAGE:?set PECMAILER_IMAGE in .env}
+  restart: unless-stopped
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+  # On stop the container finishes the PEC in hand: an SMTP dialogue is never
+  # cut on purpose, the provider may already have the message. Docker's
+  # default, 10 seconds, would kill it mid-send.
+  stop_grace_period: 2m
+  # The container writes nothing to disk.
+  read_only: true
+  logging: *logging
+
+x-pecmailer-env: &pecmailer-env
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:?set RABBITMQ_USER in .env}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672
+  PECMAILER_TENANT: ${PECMAILER_TENANT:?set PECMAILER_TENANT in .env}
+  PECMAILER_PER_MINUTE: ${PECMAILER_PER_MINUTE:-60}
+
+services:
+  rabbitmq:
+    # Docker Hub's, unless .env names a copy in the company registry.
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.3-management}
+    # RabbitMQ keeps its data under its node name, which comes from the host
+    # name: without a fixed one, a recreated container starts empty.
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+    ports:
+      - '5672:5672' # AMQP: the CRM publishes PECs and reads outcomes here
+      - '127.0.0.1:15672:15672' # management page: from the server only (ssh tunnel)
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/conf.d/90-pecmailer.conf:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
+    logging: *logging
+
+  # One service per PEC mailbox. For another mailbox, copy this block with a
+  # new service name, new variables in .env and the next probe port (3002...).
+  legalmail:
+    <<: *pecmailer
+    environment:
+      <<: *pecmailer-env
+      PECMAILER_MAILBOX: ${LEGALMAIL_MAILBOX:?set LEGALMAIL_MAILBOX in .env}
+      PECMAILER_PROVIDER: legalmail
+      PECMAILER_FROM_ADDRESS: ${LEGALMAIL_ADDRESS:?set LEGALMAIL_ADDRESS in .env}
+      PECMAILER_FROM_NAME: ${LEGALMAIL_FROM_NAME:?set LEGALMAIL_FROM_NAME in .env}
+      PECMAILER_SMTP_USERNAME: ${LEGALMAIL_USER:?set LEGALMAIL_USER in .env}
+      PECMAILER_SMTP_PASSWORD: ${LEGALMAIL_PASSWORD:?set LEGALMAIL_PASSWORD in .env}
+    ports:
+      - '127.0.0.1:3001:3001' # /health/live and /health/ready, for the server's monitoring
+
+volumes:
+  rabbitmq-data:

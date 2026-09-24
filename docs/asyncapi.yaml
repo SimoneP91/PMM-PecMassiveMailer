@@ -19,8 +19,8 @@ info:
     copy. Events about the same PEC may arrive in any order (an acceptance
     receipt can come before the `sent` event).
 
-    The same contract in words, with PHP examples: docs/it/messaggi.md
-    (Italian), docs/en/messages.md (English).
+    The same contract in words, with the rules for the consumer and PHP
+    examples: docs/guida-crm.md (Italian).
 defaultContentType: application/json
 
 servers:

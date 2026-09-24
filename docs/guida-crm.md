@@ -18,16 +18,17 @@ CRM ◄─(2) legge gli esiti── pecmailer.<cliente>.<casella>.out ◄──�
 
 - Ogni casella ha le sue tre code. Esempio: `pecmailer.serfin.serfin-legalmail.in`.
 - pecmailer **non conserva niente**: né i messaggi, né gli allegati, né le ricevute. Lo stato di ogni PEC e le ricevute, che sono la prova legale, li tiene **il CRM**.
-- pecmailer rispetta da solo il ritmo della casella: 60 PEC al minuto con le impostazioni normali. Il CRM può mettere in coda migliaia di PEC in un colpo; partiranno al ritmo giusto.
+- pecmailer rispetta da solo il ritmo della casella, deciso da chi lo installa: 60 PEC al minuto come valore predefinito, meno nei primi tempi in produzione. Il CRM può mettere in coda migliaia di PEC in un colpo; partiranno al ritmo giusto.
+- pecmailer **non offre ricerche** (lo stato di ogni PEC è nel CRM) e **non conta gli invii del giorno**: rispetta solo il ritmo al minuto, perché il gestore non blocchi la casella.
 - Per ogni PEC, pecmailer pubblica un **esito** (partita, rifiutata, fallita, incerta) e poi ogni **ricevuta** del gestore man mano che arriva.
 
 ## 2. Le regole che non si discutono
 
-1. **Una PEC non deve mai partire due volte.** Ogni PEC ha un `id` nuovo, generato dal CRM e mai riusato. Una PEC da rispedire prende un id nuovo.
+1. **Una PEC non deve mai partire due volte.** Ogni invio ha un `id` nuovo, un UUID generato dal CRM e mai riusato. Una PEC da rispedire prende un id nuovo. L'`id` **non** è l'identificativo del record del CRM: quello va in `reference` (sezione 5).
 2. **Prima il database, poi la coda.** La PEC si registra nel database del CRM _prima_ di metterla in coda: così non esiste mai una PEC di cui il CRM non sa niente.
 3. **Un esito non deve mai andare perso.** Il CRM conferma a RabbitMQ di aver ricevuto un evento (`ack`) solo _dopo_ averlo salvato nel database, nella stessa transazione.
 4. **I doppioni sono normali.** Lo stesso evento può arrivare due volte (dopo un riavvio pecmailer ripubblica le ricevute delle ultime 24 ore). Ogni evento ha un `eventId` stabile: il CRM tiene quelli già visti e scarta le copie.
-5. **Le ricevute sono la prova legale**: si salvano intere, così come arrivano, controllandone l'impronta SHA-256, e si conservano per il tempo previsto dalle regole aziendali.
+5. **Le ricevute sono la prova legale**: si salvano intere, così come arrivano, controllandone l'impronta SHA-256, e si conservano per il tempo previsto dalle regole aziendali. Restano anche nella casella PEC presso il gestore, perché pecmailer non cancella nulla, ma solo finché qualcuno non le cancella o lo spazio non finisce: la copia che fa fede è quella del CRM.
 6. **Le code sono di pecmailer.** Il CRM non le crea, non le cancella, non le svuota e non ne cambia le impostazioni. Scrive solo nelle code `.in` e legge solo dalle code `.out`.
 7. **Nessuna credenziale nel codice.** L'utente e la password di RabbitMQ arrivano da variabili d'ambiente o dal gestore dei segreti del CRM.
 
@@ -44,14 +45,14 @@ CRM ◄─(2) legge gli esiti── pecmailer.<cliente>.<casella>.out ◄──�
 
 ## 4. Cosa serve
 
-| Cosa         | Dettaglio                                                                                                                                                                                                 |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PHP          | 8.0 o superiore (il codice di riferimento usa `match` e le proprietà nel costruttore)                                                                                                                     |
-| Libreria     | `php-amqplib/php-amqplib` (`composer require php-amqplib/php-amqplib`), che richiede le estensioni `sockets` e `mbstring`                                                                                 |
-| Memoria      | `memory_limit` di almeno 256 MB: una PEC da 30 MB diventa circa 40 MB dentro il messaggio, e una ricevuta di consegna contiene la PEC intera                                                              |
-| RabbitMQ     | Indirizzo, porta, virtual host, utente e password: li fornisce chi gestisce l'infrastruttura. In produzione di solito un utente per cliente (es. `serfin`), abilitato solo alle code `pecmailer.serfin.*` |
-| Le caselle   | L'elenco dei codici casella (es. `serfin-legalmail`) e quale usare per quale tipo di PEC: è una scelta del CRM                                                                                            |
-| Spazio disco | Una cartella per i file delle ricevute, compresa nei backup                                                                                                                                               |
+| Cosa         | Dettaglio                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| PHP          | 8.0 o superiore (il codice di riferimento usa `match` e le proprietà nel costruttore)                                                                                                                                                                                                                                          |
+| Libreria     | `php-amqplib/php-amqplib` (`composer require php-amqplib/php-amqplib`), che richiede le estensioni `sockets` e `mbstring`                                                                                                                                                                                                      |
+| Memoria      | `memory_limit` di almeno 256 MB: una PEC da 30 MB diventa circa 40 MB dentro il messaggio, e una ricevuta di consegna contiene la PEC intera                                                                                                                                                                                   |
+| RabbitMQ     | Indirizzo, porta, virtual host, utente e password: li fornisce chi gestisce l'infrastruttura. Un utente per il CRM, senza diritti di amministrazione. Se più clienti condividono lo stesso RabbitMQ, ognuno ha il suo virtual host: i permessi sulle code da soli non impediscono di pubblicare nelle code di un altro cliente |
+| Le caselle   | L'elenco dei codici casella (es. `serfin-legalmail`) e quale usare per quale tipo di PEC: è una scelta del CRM                                                                                                                                                                                                                 |
+| Spazio disco | Una cartella per i file delle ricevute, compresa nei backup                                                                                                                                                                                                                                                                    |
 
 Variabili d'ambiente suggerite: `RABBITMQ_HOST`, `RABBITMQ_PORT` (5672, o 5671 con TLS), `RABBITMQ_VHOST`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `PECMAILER_CLIENTE` (es. `serfin`), `PECMAILER_CASELLE` (es. `serfin-legalmail,serfin-aruba`), `PEC_CARTELLA_RICEVUTE`.
 
@@ -61,21 +62,30 @@ Variabili d'ambiente suggerite: `RABBITMQ_HOST`, `RABBITMQ_PORT` (5672, o 5671 c
 
 Un messaggio JSON per ogni PEC, con proprietà AMQP `content_type: application/json`, `delivery_mode: 2` (persistente) e `message_id` uguale all'`id`.
 
-| Campo                         | Obbligatorio | Regole                                                                                                                                                                                   |
-| ----------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                     | sì           | Sempre `1`                                                                                                                                                                               |
-| `id`                          | sì           | Lettere, cifre, `.`, `_`, `-`; da 1 a 64 caratteri; unico per sempre. Consigliato: 32 caratteri esadecimali casuali. Il destinatario lo vede dentro il Message-ID: niente dati personali |
-| `reference`                   | no           | Etichetta del CRM, es. il numero di pratica; al massimo 200 caratteri. Torna negli esiti                                                                                                 |
-| `batch`                       | no           | Etichetta di gruppo, es. la campagna; al massimo 200 caratteri. Torna negli esiti                                                                                                        |
-| `to.address`                  | sì           | Indirizzo PEC del destinatario; al massimo 254 caratteri                                                                                                                                 |
-| `to.name`                     | no           | Nome del destinatario; al massimo 200 caratteri, senza a capo                                                                                                                            |
-| `subject`                     | sì           | Oggetto già completo; da 1 a 500 caratteri, senza a capo                                                                                                                                 |
-| `html`                        | sì           | Testo già completo in HTML; al massimo 512 KB                                                                                                                                            |
-| `attachments`                 | no           | Fino a 50: `{ "filename": "...", "content": "<base64>" }`                                                                                                                                |
-| `inlineImages`                | no           | Fino a 20 immagini nel testo: `{ "cid": "logo", "content": "<base64>", "filename": "..." }`, usate come `<img src="cid:logo">`                                                           |
-| `options.unverifiedRecipient` | no           | `reject` (predefinito) o `send`: cosa fare se non si riesce a stabilire che il dominio è PEC                                                                                             |
+| Campo                         | Obbligatorio | Regole                                                                                                                                                                                                                                                                                                     |
+| ----------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                     | sì           | Sempre `1`                                                                                                                                                                                                                                                                                                 |
+| `id`                          | sì           | **Un UUID nuovo per ogni invio** (32 caratteri esadecimali casuali: `bin2hex(random_bytes(16))`), unico per sempre. Lettere, cifre, `.`, `_`, `-`; da 1 a 64 caratteri. **Non** l'identificativo del record: quello va in `reference`. Il destinatario lo vede dentro il Message-ID: niente dati personali |
+| `reference`                   | no           | L'identificativo del record nel CRM, es. `32900738`, o il numero di pratica; al massimo 200 caratteri. Torna negli esiti                                                                                                                                                                                   |
+| `batch`                       | no           | Etichetta di gruppo, es. la campagna; al massimo 200 caratteri. Torna negli esiti                                                                                                                                                                                                                          |
+| `to.address`                  | sì           | Indirizzo PEC del destinatario; al massimo 254 caratteri                                                                                                                                                                                                                                                   |
+| `to.name`                     | no           | Nome del destinatario; al massimo 200 caratteri, senza a capo                                                                                                                                                                                                                                              |
+| `subject`                     | sì           | Oggetto già completo; da 1 a 500 caratteri, senza a capo                                                                                                                                                                                                                                                   |
+| `html`                        | sì           | Testo già completo in HTML; al massimo 512 KB                                                                                                                                                                                                                                                              |
+| `attachments`                 | no           | Fino a 50: `{ "filename": "...", "content": "<base64>" }`                                                                                                                                                                                                                                                  |
+| `inlineImages`                | no           | Fino a 20 immagini nel testo: `{ "cid": "logo", "content": "<base64>", "filename": "..." }`, usate come `<img src="cid:logo">`                                                                                                                                                                             |
+| `options.unverifiedRecipient` | no           | `reject` (predefinito) o `send`: cosa fare se non si riesce a stabilire che il dominio è PEC                                                                                                                                                                                                               |
 
-Campi non previsti fanno rifiutare il messaggio. La PEC intera, allegati compresi, non deve superare il limite della casella (30 MB con le impostazioni normali).
+Campi non previsti fanno rifiutare il messaggio. La PEC intera, allegati compresi, non deve superare il limite della casella (30 MB con le impostazioni normali): gli allegati, che vengono ricodificati, possono arrivare a circa 22 MB in tutto.
+
+**Perché l'`id` non si riusa mai.** Diventa il Message-ID della PEC, `<pm.{id}@dominio-mittente>`, e ogni ricevuta lo cita. Se lo stesso id viene usato per due invii, anche a giorni di distanza:
+
+1. la seconda PEC parte comunque: pecmailer non ricorda gli id già usati;
+2. le ricevute delle due PEC si confondono, perché citano lo stesso Message-ID;
+3. il `sent` della seconda ha lo stesso `eventId` del primo (`sent:<id>`), e il CRM lo scarta come doppione;
+4. il caso più grave: se la seconda PEC viene interrotta da un crash prima di partire, pecmailer cerca la ricevuta di accettazione di quel Message-ID, trova quella della prima PEC (la ricerca non guarda la data) e dichiara `sent` una PEC mai partita.
+
+Per questo un record del CRM può avere più invii, ognuno con il suo UUID, tutti con la stessa `reference`.
 
 Cosa pecmailer controlla prima di spedire. Se qualcosa non va, la PEC non parte e arriva un esito `rejected`:
 
@@ -108,7 +118,27 @@ I campi `reference`, `batch`, `smtpResponse`, `sentCopyError`, `smtpCode`, `prov
 | `NON_ACCEPTANCE`       | Non accettata dal gestore del mittente                                                                             | sì      |
 | `VIRUS_DETECTED`       | Rifiutata per un virus                                                                                             | sì      |
 
-Codici di `rejected`: `INVALID_MESSAGE`, `RECIPIENT_NOT_PEC`, `RECIPIENT_UNVERIFIED`, `FORBIDDEN_ELEMENT`, `FORBIDDEN_ATTRIBUTE`, `FORBIDDEN_CSS`, `FORBIDDEN_URL`, `FORBIDDEN_NODE`, `FORBIDDEN_DIRECTIVE`, `EXTERNAL_IMAGE`, `UNDECLARED_INLINE_IMAGE`, `INLINE_IMAGE_NOT_IMAGE`, `EXECUTABLE`, `EXTENSION_NOT_ALLOWED`, `CONTENT_MISMATCH`, `MESSAGE_TOO_LARGE`. Codici di `failed`: `SMTP_<codice>` (es. `SMTP_550`) o `RETRIES_EXHAUSTED`. Negli eventi `sent`, l'avviso `UNUSED_INLINE_IMAGE` segnala un'immagine allegata ma non usata: la PEC parte lo stesso.
+Negli eventi `rejected`, ogni voce di `errors` ha `code`, `field` (quando riguarda un campo preciso) e `detail`. Vengono elencati tutti i problemi del messaggio, non solo il primo.
+
+| Codice di `rejected`                    | Motivo                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `INVALID_MESSAGE`                       | Il messaggio non rispetta il formato: campo mancante, sbagliato o in più |
+| `RECIPIENT_NOT_PEC`                     | Il destinatario non è un indirizzo PEC                                   |
+| `RECIPIENT_UNVERIFIED`                  | Non si riesce a stabilire se il dominio è PEC                            |
+| `FORBIDDEN_ELEMENT`                     | Un elemento HTML non ammesso, per esempio `<script>`                     |
+| `FORBIDDEN_ATTRIBUTE`                   | Un attributo HTML non ammesso, per esempio `onclick`                     |
+| `FORBIDDEN_CSS`                         | Uno stile non ammesso, per esempio `url()`                               |
+| `FORBIDDEN_URL`                         | Un link con un protocollo non ammesso                                    |
+| `FORBIDDEN_NODE`, `FORBIDDEN_DIRECTIVE` | Parti dell'HTML non ammesse, per esempio un DOCTYPE                      |
+| `EXTERNAL_IMAGE`                        | Un'immagine caricata da internet: va passata come immagine nel testo     |
+| `UNDECLARED_INLINE_IMAGE`               | Il testo usa un `cid:` che non è tra le immagini                         |
+| `INLINE_IMAGE_NOT_IMAGE`                | Un'immagine nel testo che non è PNG, JPEG o GIF                          |
+| `EXECUTABLE`                            | Un allegato è un programma o uno script                                  |
+| `EXTENSION_NOT_ALLOWED`                 | Un allegato con un'estensione non ammessa                                |
+| `CONTENT_MISMATCH`                      | Il contenuto di un allegato non corrisponde alla sua estensione          |
+| `MESSAGE_TOO_LARGE`                     | La PEC supera il limite della casella                                    |
+
+Negli eventi `failed`, `code` è `SMTP_` seguito dal codice del gestore (es. `SMTP_550`), oppure `RETRIES_EXHAUSTED` quando gli errori temporanei continuano fino all'ultimo tentativo. Negli eventi `sent`, l'avviso `UNUSED_INLINE_IMAGE` segnala un'immagine allegata ma non usata: la PEC parte lo stesso. Un `sent` confermato dalla ricevuta dopo un'interruzione ha `confirmedBy: "ACCEPTANCE_RECEIPT"`, `attempts: 0` e `sentCopy: "UNKNOWN"`.
 
 Il contratto cresce solo aggiungendo campi o eventi: il CRM deve **ignorare i campi che non conosce** e conservare gli eventi che non conosce senza fermarsi. Una `version` diversa da 1 invece vuol dire un contratto nuovo: il CRM non la tratta e lo segnala.
 
@@ -147,6 +177,8 @@ Un evento che porterebbe a un rango uguale o più basso viene conservato ma non 
 - `TAKING_CHARGE` e `NON_DELIVERY_WARNING` si conservano ma non cambiano lo stato.
 
 **`IN_ACCODAMENTO` da più di 35 minuti** vuol dire che RabbitMQ non ha risposto, o che il processo si è fermato mentre pubblicava: la PEC potrebbe essere in coda oppure no. Ripubblicarla alla cieca rischia un doppio invio, quindi decide una persona. È sicuro ripubblicarla con lo stesso id solo se, nella pagina di RabbitMQ, le code `.in` e `.out` di quella casella sono vuote (anche la colonna "Unacked" a zero) e per quell'id non è arrivato nessun evento. In quel caso la si porta a `DA_ACCODARE` e il controllo periodico la ripubblica. È un caso raro.
+
+**Se si perde il disco di RabbitMQ** (lo segnala chi gestisce l'infrastruttura), si perdono le PEC ancora in coda e gli esiti che il CRM non aveva ancora letto: alcune PEC rimaste `IN_CODA` potrebbero essere già partite, con l'esito perso insieme al disco. Non si ripubblicano subito. Prima si lascia che pecmailer ripubblichi le ricevute che trova nella casella (lo fa da solo al riavvio, per le ultime 24 ore): le PEC partite passano ad `ACCETTATA`. Solo quelle rimaste `IN_CODA` senza nessuna ricevuta si ripubblicano, con lo stesso id. È un caso raro.
 
 ## 7. Come è fatta la parte CRM
 
@@ -481,13 +513,13 @@ Ogni 5 minuti, per esempio con cron.
 
 **Avvisi**, con soglie da regolare sull'esperienza:
 
-| Condizione                       | Query                                                                     | Perché                                                                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pubblicazione senza risposta     | `stato = 'IN_ACCODAMENTO' AND aggiornata_il < NOW() - INTERVAL 35 MINUTE` | Decide una persona (sezione 6)                                                                                                                            |
-| Ferma in coda                    | `stato = 'IN_CODA' AND aggiornata_il < NOW() - INTERVAL 3 HOUR`           | Con 60 PEC al minuto, una campagna di 5000 PEC impiega circa un'ora e mezza. Oltre, la casella potrebbe essere sospesa o il messaggio finito negli scarti |
-| Partita, ma senza accettazione   | `stato = 'SPEDITA' AND aggiornata_il < NOW() - INTERVAL 1 HOUR`           | L'accettazione arriva di norma in pochi secondi                                                                                                           |
-| Accettata, ma senza esito finale | `stato = 'ACCETTATA' AND aggiornata_il < NOW() - INTERVAL 26 HOUR`        | Per le regole PEC la consegna o la mancata consegna arrivano entro 24 ore                                                                                 |
-| Da verificare                    | `stato = 'DA_VERIFICARE'`                                                 | Serve sempre una persona                                                                                                                                  |
+| Condizione                       | Query                                                                     | Perché                                                                                                                                                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pubblicazione senza risposta     | `stato = 'IN_ACCODAMENTO' AND aggiornata_il < NOW() - INTERVAL 35 MINUTE` | Decide una persona (sezione 6)                                                                                                                                                                                                                                   |
+| Ferma in coda                    | `stato = 'IN_CODA' AND aggiornata_il < NOW() - INTERVAL <soglia>`         | La soglia dipende dal ritmo della casella: 5000 PEC impiegano circa un'ora e mezza a 60 al minuto, circa 17 ore a 5 al minuto. Va fissata sopra la durata della campagna più lunga. Oltre, la casella potrebbe essere sospesa o il messaggio finito negli scarti |
+| Partita, ma senza accettazione   | `stato = 'SPEDITA' AND aggiornata_il < NOW() - INTERVAL 1 HOUR`           | L'accettazione arriva di norma in pochi secondi                                                                                                                                                                                                                  |
+| Accettata, ma senza esito finale | `stato = 'ACCETTATA' AND aggiornata_il < NOW() - INTERVAL 26 HOUR`        | Per le regole PEC la consegna o la mancata consegna arrivano entro 24 ore                                                                                                                                                                                        |
+| Da verificare                    | `stato = 'DA_VERIFICARE'`                                                 | Serve sempre una persona                                                                                                                                                                                                                                         |
 
 ## 9. Eventi di esempio, per i test
 
@@ -610,11 +642,11 @@ Test minimi da avere:
 
 ## 10. Provare in locale, senza produzione
 
-Il progetto pecmailer contiene uno stack Docker completo: RabbitMQ, un finto gestore PEC (Greenmail) e due caselle di prova. Si avvia così (dettagli nella sua guida `docs/it/avvio.md`):
+Il progetto pecmailer contiene uno stack Docker completo: RabbitMQ, un finto gestore PEC (Greenmail) e due caselle di prova. Si avvia così (dettagli nel documento tecnico di pecmailer, `docs/tecnica.md`):
 
 ```bash
-git clone https://github.com/SimoneP91/PMM-PecMassiveMailer.git
-cd PMM-PecMassiveMailer
+git clone <indirizzo del repository pecmailer> pecmailer
+cd pecmailer
 docker compose up -d --build --wait
 ```
 
